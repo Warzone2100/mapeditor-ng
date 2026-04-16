@@ -21,6 +21,7 @@ jobs:
             os: macos-latest
           - name: Linux-x64
             os: ubuntu-latest
+      fail-fast: false
 
     name: '${{ matrix.name }}'
     runs-on: '${{ matrix.os }}'
