@@ -1,0 +1,15 @@
+[package]
+name = "wz-pie"
+description = "Warzone 2100 PIE 3D model format parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[lints]
+workspace = true

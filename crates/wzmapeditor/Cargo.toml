@@ -1,0 +1,53 @@
+[package]
+name = "wzmapeditor"
+description = "Warzone 2100 map editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+wz-maplib = { path = "../wz-maplib" }
+wz-pie = { path = "../wz-pie" }
+wz-stats = { path = "../wz-stats" }
+eframe = { workspace = true }
+egui = { workspace = true }
+bytemuck = { workspace = true }
+egui_dock = { workspace = true }
+wgpu = { workspace = true }
+glam = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+rfd = { workspace = true }
+ureq = { workspace = true }
+basis-universal = { workspace = true }
+basis-universal-sys = { workspace = true }
+zstd = { workspace = true }
+rustc-hash = { workspace = true }
+fastrand = "2"
+noise = "0.9"
+mimalloc = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
+
+[package.metadata.packager]
+product-name = "wzmapeditor"
+identifier = "org.wzmapeditor.editor"
+category = "Utility"
+icons = ["icons/256x256.png"]
+
+[package.metadata.packager.windows]
+digest-algorithm = "sha256"
+
+[package.metadata.packager.nsis]
+display-language-selector = false

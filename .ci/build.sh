@@ -25,7 +25,8 @@ if [[ "$RUNNER_OS" == "macOS" ]]; then
   FIND_CMD="gfind"
 fi
 
-BINARIES="$(cargo read-manifest | jq -r ".targets[] | select(.kind[] | contains(\"bin\")) | .name")"
+# Workspace root is virtual; read the binary crate's manifest directly.
+BINARIES="$(cargo read-manifest --manifest-path crates/wzmapeditor/Cargo.toml | jq -r ".targets[] | select(.kind[] | contains(\"bin\")) | .name")"
 
 OUTPUT_LIST=""
 for BINARY in $BINARIES; do

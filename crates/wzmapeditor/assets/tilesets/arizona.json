@@ -1,0 +1,8 @@
+{
+    "ground_tiles": [0, 5, 11, 23, 48],
+    "cliff_tiles": [18, 44, 45],
+    "water_tile": 17,
+    "cliff_threshold": 80.0,
+    "high_ground_tiles": [5, 23],
+    "high_ground_cutoff": 0.6
+}

@@ -1,0 +1,97 @@
+//! Editor document wrapping a `WzMap` with undo history.
+
+use wz_maplib::WzMap;
+
+use crate::map::history::EditHistory;
+
+/// Wraps a `WzMap` with editor state (undo history, selection, dirty flag).
+pub struct MapDocument {
+    pub map: WzMap,
+    pub history: EditHistory,
+    pub dirty: bool,
+}
+
+impl std::fmt::Debug for MapDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MapDocument")
+            .field("map_name", &self.map.map_name)
+            .field(
+                "map_size",
+                &format_args!("{}x{}", self.map.map_data.width, self.map.map_data.height),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl MapDocument {
+    pub fn new(map: WzMap) -> Self {
+        Self {
+            map,
+            history: EditHistory::new(),
+            dirty: false,
+        }
+    }
+
+    pub fn undo(&mut self) {
+        self.history.undo(&mut self.map);
+        self.dirty = true;
+    }
+
+    pub fn redo(&mut self) {
+        self.history.redo(&mut self.map);
+        self.dirty = true;
+    }
+
+    /// Mark the document as cleanly saved. Auto-save preserves the dirty
+    /// state so the user still sees unsaved changes.
+    pub fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_map() -> WzMap {
+        WzMap::new("test", 4, 4)
+    }
+
+    #[test]
+    fn new_document_is_clean() {
+        let doc = MapDocument::new(test_map());
+        assert!(!doc.dirty);
+    }
+
+    #[test]
+    fn mark_clean_clears_dirty() {
+        let mut doc = MapDocument::new(test_map());
+        doc.dirty = true;
+        doc.mark_clean();
+        assert!(!doc.dirty);
+    }
+
+    #[test]
+    fn undo_sets_dirty() {
+        let mut doc = MapDocument::new(test_map());
+        doc.undo();
+        assert!(doc.dirty);
+    }
+
+    #[test]
+    fn redo_sets_dirty() {
+        let mut doc = MapDocument::new(test_map());
+        doc.redo();
+        assert!(doc.dirty);
+    }
+
+    #[test]
+    fn mark_clean_then_undo_is_dirty() {
+        let mut doc = MapDocument::new(test_map());
+        doc.dirty = true;
+        doc.mark_clean();
+        assert!(!doc.dirty);
+        doc.undo();
+        assert!(doc.dirty);
+    }
+}

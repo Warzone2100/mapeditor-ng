@@ -1,0 +1,96 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wzmapeditor",
+    "crates/wz-maplib",
+    "crates/wz-pie",
+    "crates/wz-stats",
+]
+
+[workspace.package]
+version = "0.8.0"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-2.0-or-later"
+publish = false
+repository = "https://github.com/Warzone2100/wzmapeditor"
+homepage = "https://github.com/Warzone2100/wzmapeditor"
+
+[workspace.dependencies]
+eframe = { version = "0.34", features = ["wgpu"] }
+bytemuck = { version = "1", features = ["derive"] }
+egui = "0.34"
+egui_dock = { version = "0.19", features = ["serde"] }
+wgpu = "29"
+glam = { version = "0.32", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = "8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+byteorder = "1"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+rfd = "0.17"
+thiserror = "2"
+ureq = "3"
+basis-universal = "0.3"
+basis-universal-sys = "0.3"
+zstd = "0.13"
+rustc-hash = "2"
+
+[workspace.lints.rust]
+dead_code = "deny"
+unused_variables = "deny"
+missing_debug_implementations = "warn"
+redundant_imports = "deny"
+trivial_numeric_casts = "deny"
+unused_lifetimes = "deny"
+unused_imports = "deny"
+
+# Anything that warns gets denied at the workspace level. New violations break the build, so
+# drift can't pile up between commits. To intentionally allow a single site, attach
+# `#[expect(<lint>, reason = "...")]` to it (M-LINT-OVERRIDE-EXPECT) instead of widening this list.
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_lossless = "allow"
+cast_possible_wrap = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+wildcard_imports = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"
+struct_excessive_bools = "allow"
+# Dependency duplicates from transitive deps (eframe/wgpu ecosystem)
+multiple_crate_versions = "allow"
+# Test fixtures and fixed-vertex tables compare exact f32 sentinels (0.0/1.0/0.5).
+# Production hot paths don't compare floats this way, so the lint is mostly noise.
+float_cmp = "allow"
+float_cmp_const = "allow"
+# Tighten lint-override hygiene: every #[allow]/#[expect] needs a reason,
+# function param names cannot drift from the trait, and slicing should use
+# deref instead of `&x[..]`. semicolon_outside_block is intentionally not
+# added: it would fight the pedantic semicolon_if_nothing_returned already
+# in force, since one wants `{ stmt };` and the other wants `{ stmt; };`.
+allow_attributes_without_reason = "warn"
+renamed_function_params = "warn"
+deref_by_slicing = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Build dependencies (egui, wgpu, vello_cpu, skrifa, ...) at full optimization
+# in debug builds too. Our own crates stay at opt-level = 0 so incremental
+# rebuilds and debugger info aren't affected, but the new CPU font rasterizer
+# in egui 0.34 is unusable at -O0.
+[profile.dev.package."*"]
+opt-level = 3

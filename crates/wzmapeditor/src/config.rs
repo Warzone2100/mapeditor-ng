@@ -1,0 +1,651 @@
+//! Persistent editor configuration.
+
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+/// User-selected graphics backend.
+///
+/// Only meaningful on Windows, where wgpu can target either Direct3D 12 or
+/// Vulkan. Other platforms ignore this setting and use the platform default
+/// (Metal on macOS, Vulkan on Linux).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GraphicsBackend {
+    #[default]
+    Dx12,
+    Vulkan,
+}
+
+impl GraphicsBackend {
+    /// Human-readable label for UI surfaces.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dx12 => "Direct3D 12",
+            Self::Vulkan => "Vulkan",
+        }
+    }
+}
+
+/// Swapchain present mode preference.
+///
+/// `SmartVsync` is the user-facing "Vsync ON" setting and resolves to
+/// `AutoVsync` (Fifo / `FifoRelaxed`) on every platform. Fifo blocks the
+/// producer at vblank so the rendered frame rate matches the monitor
+/// refresh rate; combined with `desired_maximum_frame_latency: Some(1)`
+/// the queue depth stays at one frame, keeping input latency low. The
+/// remaining variants are explicit overrides (e.g. `Mailbox` for
+/// vsynced-but-uncapped rendering, or `Immediate` for tearing).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PresentMode {
+    /// Smart vsynced mode: resolves to `AutoVsync` (Fifo / `FifoRelaxed`) on every backend.
+    SmartVsync,
+    /// Pick a vsynced mode the platform supports (Fifo on Vulkan, flip-model on DX12).
+    AutoVsync,
+    /// Pick a non-vsynced mode the platform supports. Default: lowest input
+    /// latency out of the box, at the cost of possible tearing.
+    #[default]
+    AutoNoVsync,
+    /// Block until vblank, queue is bounded. Always supported.
+    Fifo,
+    /// Replace queued frame on each present; vsync without blocking. Lower
+    /// latency than Fifo but may not be supported on every adapter.
+    Mailbox,
+    /// Present immediately, no vsync. Tears, but minimum latency.
+    Immediate,
+}
+
+impl PresentMode {
+    /// Human-readable label for UI surfaces.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SmartVsync => "Auto (recommended)",
+            Self::AutoVsync => "Auto Vsync",
+            Self::AutoNoVsync => "Auto (no vsync)",
+            Self::Fifo => "Fifo (vsync, blocks)",
+            Self::Mailbox => "Mailbox (vsync, low latency)",
+            Self::Immediate => "Immediate (no vsync, tears)",
+        }
+    }
+
+    /// True if the mode is intended to vsync (used to derive the simple
+    /// "Vsync" checkbox state from the underlying enum).
+    pub fn is_vsynced(self) -> bool {
+        matches!(
+            self,
+            Self::SmartVsync | Self::AutoVsync | Self::Fifo | Self::Mailbox
+        )
+    }
+}
+
+/// Persistent configuration saved to disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditorConfig {
+    /// The WZ2100 data directory chosen by the user. For installed game
+    /// copies this is the `data/` folder that contains `base.wz`. For
+    /// source checkouts it is the `data/` folder with an extracted `base/`
+    /// subtree.
+    pub game_install_dir: Option<PathBuf>,
+    /// Resolved asset root used by all loaders, has `base/texpages` etc.
+    /// Equal to `game_install_dir` for source checkouts; points to the
+    /// extraction cache directory for installed game copies.
+    pub data_dir: Option<PathBuf>,
+    /// Whether first-run setup has been completed.
+    pub setup_complete: bool,
+    /// Last opened map path (directory or .wz file) for auto-reload on startup.
+    pub last_opened_map: Option<PathBuf>,
+    /// Archive prefix for multi-map `.wz` files (e.g. `"multiplay/maps/2c-Roughness/"`).
+    /// Empty for single-map archives or directory loads.
+    #[serde(default)]
+    pub last_opened_map_prefix: Option<String>,
+    /// Persisted rendering settings (fog, shadows, water, etc.).
+    #[serde(default)]
+    pub render_settings: Option<crate::viewport::renderer::RenderSettings>,
+    /// Whether to show the grid overlay.
+    #[serde(default)]
+    pub show_grid: Option<bool>,
+    /// Whether to show the build margin border overlay.
+    #[serde(default)]
+    pub show_border: Option<bool>,
+    /// Whether to show script label overlays in the viewport.
+    #[serde(default)]
+    pub show_labels: Option<bool>,
+    /// Whether to show gateway overlays in the viewport.
+    #[serde(default)]
+    pub show_gateways: Option<bool>,
+    /// Balance panel: draw the per-tile nearest-player partition outline.
+    #[serde(default)]
+    pub show_zone_lines: Option<bool>,
+    /// Balance panel: tint each Voronoi cell with its owning player's color.
+    #[serde(default)]
+    pub show_zone_fill: Option<bool>,
+    /// Show hitbox wireframes on every map object (View menu toggle).
+    #[serde(default)]
+    pub show_all_hitboxes: Option<bool>,
+    /// Whether the FPS / frame-time readout overlay is shown.
+    #[serde(default)]
+    pub show_fps: Option<bool>,
+    /// Persisted weather override from the View > Weather submenu.
+    #[serde(default)]
+    pub view_weather: Option<wz_maplib::Weather>,
+    /// Show hitbox wireframes only on selected objects (Settings toggle).
+    /// Aliased to the old `show_hitboxes` key so configs from earlier
+    /// builds, where that flag meant "on selected", keep their value.
+    #[serde(default, alias = "show_hitboxes")]
+    pub show_selection_hitboxes: Option<bool>,
+    /// Asset browser: grid view (true) or list view (false).
+    #[serde(default)]
+    pub asset_grid_view: Option<bool>,
+    /// Asset browser: thumbnail size.
+    #[serde(default)]
+    pub asset_thumb_size: Option<f32>,
+    /// Asset browser: show campaign-only droid templates and structures
+    /// (false hides them since they don't spawn in skirmish maps).
+    #[serde(default)]
+    pub asset_show_campaign_only: Option<bool>,
+    /// Whether the minimap is visible.
+    #[serde(default)]
+    pub minimap_visible: Option<bool>,
+    /// Active bottom dock tab name (legacy, kept for backwards compat on load).
+    #[serde(default)]
+    pub active_tab: Option<String>,
+    /// Serialized dock layout (viewport + tool/browser tab positions and splits).
+    /// Deserialized leniently: a layout saved by an older `egui_dock` whose
+    /// internal schema has since changed is silently dropped instead of failing
+    /// the whole config load.
+    #[serde(default, deserialize_with = "deserialize_dock_layout_lenient")]
+    pub dock_layout: Option<egui_dock::DockState<crate::app::DockTab>>,
+    /// User-defined tile groups per tileset (keyed by "arizona", "urban", "rockies").
+    #[serde(default)]
+    pub custom_tile_groups:
+        std::collections::HashMap<String, Vec<crate::tools::ground_type_brush::CustomTileGroup>>,
+    /// User-customizable keyboard shortcuts.
+    #[serde(default = "crate::keybindings::Keymap::default_keymap")]
+    pub keymap: crate::keybindings::Keymap,
+    /// Validation warning configuration (which warnings are disabled).
+    #[serde(default)]
+    pub validation_config: wz_maplib::ValidationConfig,
+    /// Whether periodic auto-save is enabled.
+    #[serde(default = "default_true")]
+    pub autosave_enabled: bool,
+    /// Auto-save interval in seconds.
+    #[serde(default = "crate::autosave::default_interval")]
+    pub autosave_interval_secs: u64,
+    /// Last-used tileset name (e.g. "rockies"), used to pre-load the right
+    /// tileset on startup instead of always defaulting to Arizona.
+    #[serde(default)]
+    pub last_tileset: Option<String>,
+    /// Graphics backend preference. Only applied on Windows; ignored on
+    /// other platforms. Changing this requires an app restart.
+    #[serde(default)]
+    pub graphics_backend: GraphicsBackend,
+    /// Swapchain present mode. Changing this requires an app restart.
+    #[serde(default)]
+    pub present_mode: PresentMode,
+    /// Optional frame-rate cap, independent of vsync. `None` is uncapped;
+    /// `Some(n)` throttles `update()` so at least `1/n` seconds elapse
+    /// between frames. Applied at the eframe layer rather than the
+    /// swapchain, so input is sampled fresh each capped frame instead of
+    /// waiting for the presentation queue to drain.
+    #[serde(default)]
+    pub fps_limit: Option<u32>,
+}
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self {
+            game_install_dir: None,
+            data_dir: None,
+            setup_complete: false,
+            last_opened_map: None,
+            last_opened_map_prefix: None,
+            render_settings: None,
+            show_grid: None,
+            show_border: None,
+            show_labels: None,
+            show_gateways: None,
+            show_zone_lines: None,
+            show_zone_fill: None,
+            show_all_hitboxes: None,
+            show_fps: None,
+            view_weather: None,
+            show_selection_hitboxes: None,
+            asset_grid_view: None,
+            asset_thumb_size: None,
+            asset_show_campaign_only: None,
+            minimap_visible: None,
+            active_tab: None,
+            dock_layout: None,
+            custom_tile_groups: std::collections::HashMap::new(),
+            keymap: crate::keybindings::Keymap::default_keymap(),
+            validation_config: wz_maplib::ValidationConfig::default(),
+            autosave_enabled: true,
+            autosave_interval_secs: crate::autosave::DEFAULT_INTERVAL_SECS,
+            last_tileset: None,
+            graphics_backend: GraphicsBackend::default(),
+            present_mode: PresentMode::default(),
+            fps_limit: None,
+        }
+    }
+}
+
+impl EditorConfig {
+    /// Path to the config file.
+    fn config_path() -> PathBuf {
+        let base = dirs_next().unwrap_or_else(|| PathBuf::from("."));
+        base.join("wzmapeditor.json")
+    }
+
+    /// Load config from disk, or return defaults if not found.
+    pub fn load() -> Self {
+        let path = Self::config_path();
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(config) => {
+                        log::info!("Loaded config from {}", path.display());
+                        return config;
+                    }
+                    Err(e) => log::warn!("Failed to parse config: {e}"),
+                },
+                Err(e) => log::warn!("Failed to read config: {e}"),
+            }
+        }
+        log::info!("No config found, using defaults");
+        Self::default()
+    }
+
+    /// Save config to disk.
+    pub fn save(&self) {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(self) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    log::error!("Failed to write config to {}: {}", path.display(), e);
+                } else {
+                    log::info!("Saved config to {}", path.display());
+                }
+            }
+            Err(e) => log::error!("Failed to serialize config: {e}"),
+        }
+    }
+
+    /// Get the tileset directory path from `data_dir` for a given tileset.
+    pub fn tileset_dir_for(&self, tileset: Tileset) -> Option<PathBuf> {
+        self.data_dir.as_ref().map(|d| d.join(tileset.subpath()))
+    }
+}
+
+/// WZ2100 terrain tilesets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Tileset {
+    Arizona,
+    Urban,
+    Rockies,
+}
+
+impl Tileset {
+    /// All available tilesets in display order.
+    pub const ALL: [Self; 3] = [Self::Arizona, Self::Urban, Self::Rockies];
+
+    /// Lowercase name matching WZ2100 conventions (e.g. `"arizona"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Arizona => "arizona",
+            Self::Urban => "urban",
+            Self::Rockies => "rockies",
+        }
+    }
+
+    /// Parse a tileset from its lowercase name (e.g. `"rockies"` → `Rockies`).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "arizona" => Some(Self::Arizona),
+            "urban" => Some(Self::Urban),
+            "rockies" => Some(Self::Rockies),
+            _ => None,
+        }
+    }
+
+    /// PIE texture page index for multi-texture models (0=Arizona, 1=Urban, 2=Rockies).
+    pub fn texture_index(self) -> usize {
+        match self {
+            Self::Arizona => 0,
+            Self::Urban => 1,
+            Self::Rockies => 2,
+        }
+    }
+
+    /// Subdirectory path for 128x128 tile textures within the WZ2100 data directory.
+    pub fn subpath(self) -> &'static str {
+        match self {
+            Tileset::Arizona => "base/texpages/tertilesc1hw-128",
+            Tileset::Urban => "base/texpages/tertilesc2hw-128",
+            Tileset::Rockies => "base/texpages/tertilesc3hw-128",
+        }
+    }
+
+    /// Subdirectory for 256x256 normal/specular tile maps (decal `_nm`/`_sm` files).
+    pub fn subpath_256(self) -> &'static str {
+        match self {
+            Tileset::Arizona => "base/texpages/tertilesc1hw-256",
+            Tileset::Urban => "base/texpages/tertilesc2hw-256",
+            Tileset::Rockies => "base/texpages/tertilesc3hw-256",
+        }
+    }
+
+    /// Detect tileset from the first three terrain type values in the TTP
+    /// data, which form a unique per-tileset signature (matches the
+    /// maptools-cli approach).
+    pub fn from_terrain_types(types: &[u16]) -> Self {
+        if types.len() >= 3 {
+            match (types[0], types[1], types[2]) {
+                // Urban: Bakedearth, Bakedearth, Bakedearth.
+                (2, 2, 2) => Tileset::Urban,
+                // Rockies: Sand, Sand, Bakedearth.
+                (0, 0, 2) => Tileset::Rockies,
+                // Arizona (SandYellow, Sand, Bakedearth) and default.
+                _ => Tileset::Arizona,
+            }
+        } else {
+            Tileset::Arizona
+        }
+    }
+
+    /// Default TTP terrain type signature for this tileset (first 3 entries).
+    pub fn default_terrain_types(self) -> Vec<wz_maplib::TerrainType> {
+        use wz_maplib::TerrainType;
+        match self {
+            Self::Arizona => vec![
+                TerrainType::SandYellow,
+                TerrainType::Sand,
+                TerrainType::Bakedearth,
+            ],
+            Self::Urban => vec![
+                TerrainType::Bakedearth,
+                TerrainType::Bakedearth,
+                TerrainType::Bakedearth,
+            ],
+            Self::Rockies => vec![
+                TerrainType::Sand,
+                TerrainType::Sand,
+                TerrainType::Bakedearth,
+            ],
+        }
+    }
+}
+
+impl std::fmt::Display for Tileset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Arizona => write!(f, "Arizona"),
+            Self::Urban => write!(f, "Urban"),
+            Self::Rockies => write!(f, "Rockies"),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// On any deserialize error fall through to the programmatic default
+/// layout. Older configs from a previous `egui_dock` version may be missing
+/// fields the current version requires.
+fn deserialize_dock_layout_lenient<'de, D>(
+    deserializer: D,
+) -> Result<Option<egui_dock::DockState<crate::app::DockTab>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
+/// `<config_dir>/wzmapeditor.log`. Overwritten each launch.
+pub fn log_file_path() -> PathBuf {
+    dirs_next()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("wzmapeditor.log")
+}
+
+/// `<config_dir>/base-cache`. Content extracted from `base.wz` lives here
+/// so it survives restarts without re-extraction.
+pub fn extraction_cache_dir() -> PathBuf {
+    dirs_next()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("base-cache")
+}
+
+/// `<config_dir>/ground-cache-v5`. Decoded RGBA ground textures (resized to
+/// 1024x1024) are stored as raw `.bin` files for instant loading without
+/// PNG/KTX2 decode overhead.
+pub fn ground_cache_dir() -> PathBuf {
+    dirs_next()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ground-cache-v5")
+}
+
+/// `<config_dir>/autosave`. Temporary `.wz` archives are written here
+/// periodically and cleaned up after explicit user saves.
+pub fn autosave_dir() -> PathBuf {
+    dirs_next()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("autosave")
+}
+
+/// `<config_dir>/thumb-cache`. 128x128 PNG model thumbnails that persist
+/// across restarts; invalidated when the cache version changes.
+pub fn thumb_cache_dir() -> PathBuf {
+    dirs_next()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("thumb-cache")
+}
+
+/// `%APPDATA%\wzmapeditor` on Windows, `~/.config/wzmapeditor` on Unix.
+pub fn config_dir() -> PathBuf {
+    dirs_next().unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Platform-appropriate path where WZ2100 stores user data (maps, tests,
+/// replays). Different WZ2100 builds use different base directories
+/// (`%APPDATA%` vs `%LOCALAPPDATA%` on Windows), so this checks both and
+/// picks whichever contains an existing WZ2100 profile.
+pub fn wz2100_config_dir() -> Option<PathBuf> {
+    let bases = wz2100_config_bases();
+    let suffixes = ["4.5", "4.4", "4.3", "4.2"];
+
+    // First pass: find an existing versioned or bare directory.
+    for base in &bases {
+        for suffix in &suffixes {
+            let versioned = base.join(format!("Warzone 2100-{suffix}"));
+            if versioned.exists() {
+                log::info!("Detected WZ2100 config dir: {}", versioned.display());
+                return Some(versioned);
+            }
+        }
+        let bare = base.join("Warzone 2100");
+        if bare.exists() {
+            log::info!("Detected WZ2100 config dir: {}", bare.display());
+            return Some(bare);
+        }
+    }
+
+    // Nothing found, fall back to the first base with a reasonable default.
+    bases.first().map(|b| b.join("Warzone 2100-4.5"))
+}
+
+/// Candidate base directories for WZ2100 user profiles. Different WZ2100
+/// builds (installer, portable, Steam) may use `%APPDATA%` (Roaming) or
+/// `%LOCALAPPDATA%` (Local) on Windows; callers probe each for existence.
+fn wz2100_config_bases() -> Vec<PathBuf> {
+    let mut bases = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Roaming first, most common for official WZ2100 builds.
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            bases.push(Path::new(&appdata).join("Warzone 2100 Project"));
+        }
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            bases.push(Path::new(&local).join("Warzone 2100 Project"));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            bases.push(Path::new(&home).join(".local/share/Warzone 2100 Project"));
+        }
+    }
+
+    bases
+}
+
+/// Locate the WZ2100 executable relative to the game install directory.
+/// `game_install_dir` from config may point to the `data/` subfolder rather
+/// than the game root, so this checks the dir itself, its parent, and
+/// common `bin/` subdirectories.
+pub fn wz2100_executable(game_install_dir: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let name = "warzone2100.exe";
+    #[cfg(not(target_os = "windows"))]
+    let name = "warzone2100";
+
+    let mut candidates: Vec<PathBuf> = vec![game_install_dir.to_path_buf()];
+    if let Some(parent) = game_install_dir.parent() {
+        // game_install_dir is likely `<root>/data/`, try the game root and bin/.
+        candidates.push(parent.to_path_buf());
+        candidates.push(parent.join("bin"));
+    }
+    candidates.push(game_install_dir.join("bin"));
+
+    for dir in &candidates {
+        let exe = dir.join(name);
+        if exe.exists() {
+            return Some(exe);
+        }
+    }
+    None
+}
+
+/// Platform-appropriate config directory: `%APPDATA%\wzmapeditor` on
+/// Windows, `~/.config/wzmapeditor` on Unix/macOS. Falls back to the
+/// current working directory when no home variable is set.
+fn dirs_next() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return Some(Path::new(&appdata).join("wzmapeditor"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(Path::new(&home).join(".config").join("wzmapeditor"));
+    }
+
+    // USERPROFILE covers Windows when APPDATA is absent.
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return Some(Path::new(&profile).join(".config").join("wzmapeditor"));
+    }
+
+    std::env::current_dir().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn wz2100_executable_finds_exe_in_same_dir() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        #[cfg(target_os = "windows")]
+        let name = "warzone2100.exe";
+        #[cfg(not(target_os = "windows"))]
+        let name = "warzone2100";
+
+        let exe_path = dir.path().join(name);
+        fs::write(&exe_path, b"fake").expect("write");
+
+        let result = wz2100_executable(dir.path());
+        assert_eq!(result, Some(exe_path));
+    }
+
+    #[test]
+    fn wz2100_executable_finds_exe_in_parent() {
+        // Simulates game_install_dir = <root>/data/
+        let root = tempfile::tempdir().expect("temp dir");
+        let data_dir = root.path().join("data");
+        fs::create_dir(&data_dir).expect("mkdir");
+
+        #[cfg(target_os = "windows")]
+        let name = "warzone2100.exe";
+        #[cfg(not(target_os = "windows"))]
+        let name = "warzone2100";
+
+        let exe_path = root.path().join(name);
+        fs::write(&exe_path, b"fake").expect("write");
+
+        let result = wz2100_executable(&data_dir);
+        assert_eq!(result, Some(exe_path));
+    }
+
+    #[test]
+    fn wz2100_executable_finds_exe_in_parent_bin() {
+        // Simulates game_install_dir = <root>/data/, exe at <root>/bin/
+        let root = tempfile::tempdir().expect("temp dir");
+        let data_dir = root.path().join("data");
+        let bin_dir = root.path().join("bin");
+        fs::create_dir(&data_dir).expect("mkdir data");
+        fs::create_dir(&bin_dir).expect("mkdir bin");
+
+        #[cfg(target_os = "windows")]
+        let name = "warzone2100.exe";
+        #[cfg(not(target_os = "windows"))]
+        let name = "warzone2100";
+
+        let exe_path = bin_dir.join(name);
+        fs::write(&exe_path, b"fake").expect("write");
+
+        let result = wz2100_executable(&data_dir);
+        assert_eq!(result, Some(exe_path));
+    }
+
+    #[test]
+    fn fps_limit_defaults_to_uncapped() {
+        let cfg = EditorConfig::default();
+        assert_eq!(cfg.fps_limit, None);
+    }
+
+    #[test]
+    fn fps_limit_round_trips_through_json() {
+        let cfg = EditorConfig {
+            fps_limit: Some(72),
+            ..EditorConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let parsed: EditorConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.fps_limit, Some(72));
+    }
+
+    #[test]
+    fn fps_limit_missing_field_loads_as_none() {
+        // Older configs predate fps_limit; serde(default) keeps them loadable.
+        let json = r#"{
+            "game_install_dir": null,
+            "data_dir": null,
+            "setup_complete": false,
+            "last_opened_map": null
+        }"#;
+        let cfg: EditorConfig = serde_json::from_str(json).expect("deserialize legacy");
+        assert_eq!(cfg.fps_limit, None);
+    }
+
+    #[test]
+    fn wz2100_executable_returns_none_when_missing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        assert_eq!(wz2100_executable(dir.path()), None);
+    }
+}
