@@ -25,6 +25,11 @@ if [[ "$RUNNER_OS" == "macOS" ]]; then
   FIND_CMD="gfind"
 fi
 
+CARGO_CMD="cargo"
+if [ "$USE_CROSS" = "true" ]; then
+  CARGO_CMD="cross"
+fi
+
 # Workspace root is virtual; read the binary crate's manifest directly.
 BINARIES="$(cargo read-manifest --manifest-path crates/wzmapeditor/Cargo.toml | jq -r ".targets[] | select(.kind[] | contains(\"bin\")) | .name")"
 
@@ -32,7 +37,7 @@ OUTPUT_LIST=""
 for BINARY in $BINARIES; do
   info "Building $BINARY (for target $RUSTTARGET) ..."
 
-  CARGO_TARGET_DIR="./target" cargo build --release --target "${RUSTTARGET}" --bin "${BINARY}" >&2
+  CARGO_TARGET_DIR="./target" ${CARGO_CMD} build --release --target "${RUSTTARGET}" --bin "${BINARY}" >&2
   OUTPUT=$(${FIND_CMD} "target/${RUSTTARGET}/release/" -maxdepth 1 -type f -executable \( -name "${BINARY}" -o -name "${BINARY}.*" \) -print0 | xargs -0)
 
   info "${OUTPUT}"
