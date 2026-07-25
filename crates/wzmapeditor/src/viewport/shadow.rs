@@ -1,5 +1,6 @@
 //! Shadow mapping GPU resources, bind group creation, and light-space MVP computation.
 
+use glam::camera::rh;
 use glam::{Mat4, Vec3};
 
 /// Single-cascade shadow map covering the whole map. 2048 balances
@@ -122,10 +123,10 @@ pub fn compute_shadow_mvp(sun_direction: [f32; 3], map_dims: (u32, u32)) -> Mat4
     } else {
         Vec3::Y
     };
-    let light_view = Mat4::look_at_rh(light_pos, center, up);
+    let light_view = rh::view::look_at_mat4(light_pos, center, up);
 
     let half = extent * 0.7;
-    let light_proj = Mat4::orthographic_rh(-half, half, -half, half, 1.0, extent * 3.0);
+    let light_proj = rh::proj::directx::orthographic(-half, half, -half, half, 1.0, extent * 3.0);
 
     light_proj * light_view
 }

@@ -53,7 +53,11 @@ fn player_label(p: i8) -> String {
 
 /// Player picker shared by the property panel and the Asset Browser so both
 /// present the same "Scavenger / Player N" combo. Returns true when changed.
-pub(crate) fn player_widget(ui: &mut Ui, p: &mut i8, salt: impl std::hash::Hash) -> bool {
+pub(crate) fn player_widget(
+    ui: &mut Ui,
+    p: &mut i8,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> bool {
     let original = *p;
     egui::ComboBox::from_id_salt(salt)
         .selected_text(player_label(*p))

@@ -100,13 +100,15 @@ fn main() -> eframe::Result {
         // 3D terrain pipeline requires a depth attachment.
         depth_buffer: 32,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            present_mode: present_mode_for(&startup_config),
-            // Cap CPU-side frames-in-flight at 1 to minimize input latency.
-            // Vulkan on Windows otherwise queues ~2 frames, feeling laggier
-            // than DX12's flip-model swapchain (DXGI pins latency to 1 via
-            // waitable objects automatically). Setting this to 1 closes the
-            // gap on Vulkan and shaves a frame off DX12 in practice.
-            desired_maximum_frame_latency: Some(1),
+            surface: eframe::egui_wgpu::SurfaceConfig {
+                present_mode: present_mode_for(&startup_config),
+                // Cap CPU-side frames-in-flight at 1 to minimize input latency.
+                // Vulkan on Windows otherwise queues ~2 frames, feeling laggier
+                // than DX12's flip-model swapchain (DXGI pins latency to 1 via
+                // waitable objects automatically). Setting this to 1 closes the
+                // gap on Vulkan and shaves a frame off DX12 in practice.
+                desired_maximum_frame_latency: Some(1),
+            },
             wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
                 eframe::egui_wgpu::WgpuSetupCreateNew {
                     instance_descriptor: wgpu::InstanceDescriptor {

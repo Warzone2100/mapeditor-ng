@@ -1,5 +1,6 @@
 //! Free-look camera with WASD movement and mouse control.
 
+use glam::camera::rh;
 use glam::{Mat4, Vec3};
 
 /// Default mouse look sensitivity (radians per pixel of drag).
@@ -104,12 +105,12 @@ impl Camera {
 
         let forward = Vec3::new(cos_pitch * sin_yaw, sin_pitch, cos_pitch * cos_yaw);
         let target = self.position + forward;
-        Mat4::look_at_rh(self.position, target, Vec3::Y)
+        rh::view::look_at_mat4(self.position, target, Vec3::Y)
     }
 
     /// Compute the perspective projection matrix.
     pub fn projection_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fov, self.aspect, self.near, self.far)
+        rh::proj::directx::perspective(self.fov, self.aspect, self.near, self.far)
     }
 
     /// Compute the combined view-projection matrix.

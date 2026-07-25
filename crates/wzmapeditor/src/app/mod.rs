@@ -802,10 +802,9 @@ impl EditorApp {
 }
 
 impl eframe::App for EditorApp {
-    // eframe 0.34 calls both `update` and `ui` each frame. Pre-render logic
-    // (polling, dialogs, dirty checks) stays in `update`; panel rendering
-    // moved here so we can call `Panel::show_inside(ui, ...)` instead of the
-    // deprecated `Panel::show(ctx, ...)`.
+    // eframe calls `logic` then `ui` each frame. Pre-render work (polling,
+    // dialogs, dirty checks) stays in `logic`; panels render here because
+    // `Panel::show` takes a `Ui` rather than a `Context`.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if !matches!(self.startup_phase, StartupPhase::Ready) {
             crate::startup::splash_ui::show_launcher(ui, self);
@@ -876,7 +875,7 @@ impl eframe::App for EditorApp {
         }
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_count = self.update_count.saturating_add(1);
         // Reaching the second update means the first frame rendered, so
         // GPU init and egui's first shader compile succeeded.
@@ -1318,18 +1317,18 @@ fn handle_deferred_save(app: &mut EditorApp) {
 
 /// Render menu bar, toolbar, dock area, and designer modal.
 fn show_ui_panels(ui: &mut egui::Ui, app: &mut EditorApp) {
-    egui::Panel::top("menu_bar").show_inside(ui, |ui| {
+    egui::Panel::top("menu_bar").show(ui, |ui| {
         ui::main_menu::show_menu_bar(ui, app);
     });
 
-    egui::Panel::top("toolbar").show_inside(ui, |ui| {
+    egui::Panel::top("toolbar").show(ui, |ui| {
         ui::toolbar::show_toolbar(ui, app);
     });
 
     let mut dock = std::mem::replace(&mut app.dock, DockState::new(vec![DockTab::Viewport]));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             let mut tab_viewer = dock_viewer::DockTabViewer { app };
             let mut dock_style = Style::from_egui(ui.style().as_ref());
             dock_style.dock_area_padding = Some(egui::Margin::same(0));

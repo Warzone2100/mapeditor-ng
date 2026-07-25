@@ -38,7 +38,7 @@ fn splash_card(
     icon: Option<&egui::TextureHandle>,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    egui::CentralPanel::default().show_inside(ui, |_| {});
+    egui::CentralPanel::default().show(ui, |_| {});
 
     egui::Window::new("splash")
         .title_bar(false)

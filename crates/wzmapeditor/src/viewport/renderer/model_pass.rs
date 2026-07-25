@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use eframe::wgpu::util::DeviceExt;
 use glam::Mat4;
+use glam::camera::rh;
 
 use super::super::model_gpu::ModelResources;
 use super::super::pie_mesh::{ModelInstance, ModelVertex};
@@ -134,9 +135,10 @@ pub(super) fn encode_thumbnail_pass(
     let rot = glam::Quat::from_rotation_y(y_rotation);
     // 1.2 padding keeps the model off the viewport edge.
     let eye = center + rot * cam_dir * extent * 1.2;
-    let view = Mat4::look_at_rh(eye, center, glam::Vec3::Y);
+    let view = rh::view::look_at_mat4(eye, center, glam::Vec3::Y);
     let half = extent * 0.7;
-    let proj = Mat4::orthographic_rh(-half, half, -half, half, -extent * 3.0, extent * 3.0);
+    let proj =
+        rh::proj::directx::orthographic(-half, half, -half, half, -extent * 3.0, extent * 3.0);
     let mvp = proj * view;
 
     let uniforms = Uniforms {

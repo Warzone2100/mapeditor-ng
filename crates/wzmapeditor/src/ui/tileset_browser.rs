@@ -163,54 +163,50 @@ pub fn show_tileset_browser(
         .map_or(0_u8, |b| b.selected_ground_type);
 
     let top_id = ui.id().with("tileset_top_panel");
-    egui::Panel::top(top_id)
-        .resizable(false)
-        .show_inside(ui, |ui| {
-            ui.add_space(2.0);
+    egui::Panel::top(top_id).resizable(false).show(ui, |ui| {
+        ui.add_space(2.0);
 
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
 
-                let single_btn = egui::Button::new(egui::RichText::new("Single").small().color(
-                    if single_mode {
-                        egui::Color32::WHITE
-                    } else {
-                        ui.visuals().text_color()
-                    },
-                ))
+            let single_btn =
+                egui::Button::new(egui::RichText::new("Single").small().color(if single_mode {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                }))
                 .fill(if single_mode {
                     ui.visuals().selection.bg_fill
                 } else {
                     egui::Color32::TRANSPARENT
                 });
 
-                if ui
-                    .add(single_btn)
-                    .on_hover_text("Paint with a single tile")
-                    .clicked()
-                {
-                    tool_state.ground_type_mode = false;
-                    tool_state.active_tool = crate::tools::ToolId::TexturePaint;
-                }
+            if ui
+                .add(single_btn)
+                .on_hover_text("Paint with a single tile")
+                .clicked()
+            {
+                tool_state.ground_type_mode = false;
+                tool_state.active_tool = crate::tools::ToolId::TexturePaint;
+            }
 
-                ui.separator();
+            ui.separator();
 
-                let mut clicked_group: Option<u8> = None;
-                for (idx, pool) in tool_state.tile_pools.iter().enumerate() {
-                    let is_selected =
-                        tool_state.ground_type_mode && selected_ground == pool.ground_type_index;
-                    let [r, g, b] = pool.color;
-                    let color = egui::Color32::from_rgb(r, g, b);
-                    let tile_count: usize = pool.buckets.iter().map(|b| b.tile_ids.len()).sum();
+            let mut clicked_group: Option<u8> = None;
+            for (idx, pool) in tool_state.tile_pools.iter().enumerate() {
+                let is_selected =
+                    tool_state.ground_type_mode && selected_ground == pool.ground_type_index;
+                let [r, g, b] = pool.color;
+                let color = egui::Color32::from_rgb(r, g, b);
+                let tile_count: usize = pool.buckets.iter().map(|b| b.tile_ids.len()).sum();
 
-                    let label = format!("{} ({tile_count})", pool.name);
-                    let btn = egui::Button::new(egui::RichText::new(&label).small().color(
-                        if is_selected {
-                            egui::Color32::WHITE
-                        } else {
-                            ui.visuals().text_color()
-                        },
-                    ))
+                let label = format!("{} ({tile_count})", pool.name);
+                let btn =
+                    egui::Button::new(egui::RichText::new(&label).small().color(if is_selected {
+                        egui::Color32::WHITE
+                    } else {
+                        ui.visuals().text_color()
+                    }))
                     .fill(if is_selected {
                         color
                     } else {
@@ -218,47 +214,47 @@ pub fn show_tileset_browser(
                     })
                     .stroke(egui::Stroke::new(1.0_f32, color));
 
-                    if ui.add(btn).on_hover_text(&pool.name).clicked() {
-                        clicked_group = Some(idx as u8);
-                    }
+                if ui.add(btn).on_hover_text(&pool.name).clicked() {
+                    clicked_group = Some(idx as u8);
                 }
-                if let Some(idx) = clicked_group {
-                    tool_state.ground_type_mode = true;
-                    if let Some(brush) = tool_state.ground_type_brush_mut() {
-                        brush.selected_ground_type = idx;
-                    }
-                    tool_state.active_tool = crate::tools::ToolId::GroundTypePaint;
+            }
+            if let Some(idx) = clicked_group {
+                tool_state.ground_type_mode = true;
+                if let Some(brush) = tool_state.ground_type_brush_mut() {
+                    brush.selected_ground_type = idx;
+                }
+                tool_state.active_tool = crate::tools::ToolId::GroundTypePaint;
+            }
+        });
+
+        if tool_state.ground_type_mode {
+            ui.horizontal(|ui| {
+                let text_edit = egui::TextEdit::singleline(&mut tool_state.new_group_name)
+                    .desired_width(80.0)
+                    .hint_text("Group name");
+                let response = ui.add(text_edit);
+                let enter_pressed =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let name_valid = !tool_state.new_group_name.trim().is_empty();
+                if ui
+                    .add_enabled(name_valid, egui::Button::new("+").small())
+                    .clicked()
+                    || (enter_pressed && name_valid)
+                {
+                    action = GroundTypeAction::NewGroup;
+                }
+                let can_delete = tool_state.tile_pools.len() > 1;
+                if ui
+                    .add_enabled(can_delete, egui::Button::new("-").small())
+                    .clicked()
+                {
+                    action = GroundTypeAction::DeleteGroup;
                 }
             });
+        }
 
-            if tool_state.ground_type_mode {
-                ui.horizontal(|ui| {
-                    let text_edit = egui::TextEdit::singleline(&mut tool_state.new_group_name)
-                        .desired_width(80.0)
-                        .hint_text("Group name");
-                    let response = ui.add(text_edit);
-                    let enter_pressed =
-                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let name_valid = !tool_state.new_group_name.trim().is_empty();
-                    if ui
-                        .add_enabled(name_valid, egui::Button::new("+").small())
-                        .clicked()
-                        || (enter_pressed && name_valid)
-                    {
-                        action = GroundTypeAction::NewGroup;
-                    }
-                    let can_delete = tool_state.tile_pools.len() > 1;
-                    if ui
-                        .add_enabled(can_delete, egui::Button::new("-").small())
-                        .clicked()
-                    {
-                        action = GroundTypeAction::DeleteGroup;
-                    }
-                });
-            }
-
-            ui.add_space(2.0);
-        });
+        ui.add_space(2.0);
+    });
 
     let selected_idx = selected_ground as usize;
     if tool_state.ground_type_mode
