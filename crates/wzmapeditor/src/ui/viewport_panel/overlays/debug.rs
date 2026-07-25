@@ -82,6 +82,36 @@ pub(super) fn draw_info_bar(ui: &mut Ui, app: &mut EditorApp, rect: Rect) {
     );
 }
 
+/// Draw the build's git commit hash at the bottom-centre of the viewport.
+///
+/// Web + dev-host only: it confirms which commit is live on the dev
+/// deployment. Both dev and production ship `--release`, so the serving
+/// hostname — not the build profile — is what distinguishes them.
+#[cfg(target_arch = "wasm32")]
+pub(super) fn draw_build_hash(ui: &Ui, rect: Rect) {
+    if !served_from_dev_host() {
+        return;
+    }
+    ui.painter_at(rect).text(
+        rect.center_bottom() + egui::vec2(0.0, -6.0),
+        Align2::CENTER_BOTTOM,
+        concat!("build ", env!("WZ_GIT_HASH")),
+        FontId::monospace(11.0),
+        Color32::from_rgba_premultiplied(180, 190, 190, 160),
+    );
+}
+
+/// Whether the page is served from a development host: the `dev.` deployment
+/// or a local `trunk serve`. Production hosts return `false`.
+#[cfg(target_arch = "wasm32")]
+fn served_from_dev_host() -> bool {
+    let host = web_sys::window()
+        .map(|w| w.location())
+        .and_then(|loc| loc.hostname().ok())
+        .unwrap_or_default();
+    host.starts_with("dev.") || host == "localhost" || host == "127.0.0.1"
+}
+
 pub(super) fn draw_speed_readout(ui: &Ui, camera: Option<&Camera>, rect: Rect) {
     let Some(cam) = camera else {
         return;

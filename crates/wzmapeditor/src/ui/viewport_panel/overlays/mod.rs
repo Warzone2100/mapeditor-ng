@@ -44,6 +44,8 @@ pub(super) fn draw_all(ui: &mut Ui, app: &mut EditorApp, camera: Option<&Camera>
     tools::draw_tool_buttons(ui, app, rect);
     heatmap::draw(ui, app, rect);
     debug::draw_fps_readout(ui, app, rect);
+    #[cfg(target_arch = "wasm32")]
+    debug::draw_build_hash(ui, rect);
 }
 
 #[cfg(test)]
