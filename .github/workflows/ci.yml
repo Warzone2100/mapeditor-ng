@@ -216,6 +216,17 @@ jobs:
         name: wzmapeditor-web
         path: wzmapeditor-web.zip
         archive: false
+    # The deploy site pulls this asset off the release to publish
+    # mapeditor.wz2100.net; artifacts expire, so the release carries it.
+    - name: Attach to release
+      if: ${{ steps.detect.outputs.present == 'true' && startsWith(github.ref, 'refs/tags/') }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        TAG="${GITHUB_REF#refs/tags/}"
+        gh release upload "$TAG" wzmapeditor-web.zip --clobber
 
   dispatch-to-deploy-repo:
     needs: [web-bundle]
