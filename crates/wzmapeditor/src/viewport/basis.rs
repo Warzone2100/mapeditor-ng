@@ -48,15 +48,23 @@ pub(crate) fn is_failed() -> bool {
     STATE.with(|s| s.get() == InitState::Failed)
 }
 
-/// Start loading the transcoder module once; a no-op if already loading, ready,
-/// or failed.
+/// Start loading the transcoder module; a no-op while a load is in flight or
+/// has already succeeded, but a previous failure is retried.
 ///
 /// The transcoder is a ~530 KB WebAssembly module fetched on demand, so this is
 /// only called once an HQ terrain pack is present. `ctx` is repainted on
 /// completion so the editor re-evaluates HQ availability on the next frame.
+///
+/// Retrying from `Failed` is safe without a generation guard: that state is
+/// only reached after the previous attempt's future has resolved, so no
+/// in-flight writer can race the restart. This lets a user "Retry" or a fresh
+/// `high.wz` upload recover from a transient fetch/decoder error instead of
+/// leaving the transcoder stuck forever.
 pub(crate) fn ensure_initialized(ctx: &egui::Context) {
     let should_start = STATE.with(|s| {
-        let start = s.get() == InitState::Idle;
+        // `Loading` (in flight) and `Ready` are left untouched so a retry never
+        // spawns a duplicate load; `Idle` and `Failed` (re)start one.
+        let start = matches!(s.get(), InitState::Idle | InitState::Failed);
         if start {
             s.set(InitState::Loading);
         }

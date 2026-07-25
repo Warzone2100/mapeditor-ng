@@ -207,6 +207,20 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut EditorApp) {
                             ui.close();
                         }
                     }
+                } else if !crate::viewport::basis::is_ready() {
+                    // Pack installed but the KTX2 decoder isn't usable yet.
+                    // Without this the disabled "Remastered" radio gives no clue
+                    // why, and a failed decoder stays terminal until retried.
+                    ui.separator();
+                    if crate::viewport::basis::is_failed() {
+                        ui.label("Remastered decoder failed to load.");
+                        if ui.button("Retry decoder\u{2026}").clicked() {
+                            crate::viewport::basis::ensure_initialized(ui.ctx());
+                            ui.close();
+                        }
+                    } else {
+                        ui.label("Loading Remastered decoder\u{2026}");
+                    }
                 }
             }
             ui.separator();
