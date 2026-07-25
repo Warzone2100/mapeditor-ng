@@ -49,7 +49,7 @@ For building from source:
 
 ## Install
 
-Prebuilt binaries are available for Windows (x64), macOS (Apple Silicon), and Linux (x64). Download the archive for your platform from the [Releases](../../releases) page, unzip, and run the executable.
+Prebuilt binaries are available for Windows (x64, ARM64), macOS (Apple Silicon), and Linux (x64, ARM64). Download the archive for your platform from the [Releases](../../releases) page, unzip, and run the executable.
 
 ---
 
@@ -92,15 +92,6 @@ cargo test --workspace
 cargo fmt --check          # Check formatting
 cargo clippy --workspace   # Run clippy lints (pedantic + cargo enabled)
 ```
-
----
-
-## Related Projects
-
-- [Warzone 2100](https://github.com/Warzone2100/warzone2100)
-- [FlaME](https://github.com/Warzone2100/FlaME)
-- [wzmaplib](https://github.com/Warzone2100/warzone2100/tree/master/lib/wzmaplib)
-- [Maps Database](https://github.com/Warzone2100/maps-database)
 
 ---
 
