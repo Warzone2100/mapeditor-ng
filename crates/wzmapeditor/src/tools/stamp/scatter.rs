@@ -27,6 +27,7 @@ const RETRIES_PER_TARGET: u32 = 6;
 /// `radius_tiles == 0`.
 pub(super) fn apply_scatter(
     map: &mut WzMap,
+    stats: Option<&wz_stats::StatsDatabase>,
     pattern: &StampPattern,
     center_x_tile: u32,
     center_y_tile: u32,
@@ -122,7 +123,11 @@ pub(super) fn apply_scatter(
             y: wy as u32,
         };
 
-        accum.place(map, sample, position, new_dir);
+        // A sample whose ground cannot carry it is dropped rather than retried,
+        // so its position must not count towards min-spacing either.
+        if !accum.place(map, stats, sample, position, new_dir) {
+            continue;
+        }
         placed_positions.push((wx, wy));
     }
 
@@ -181,7 +186,7 @@ mod tests {
         };
         let mut rng = fastrand::Rng::with_seed(1);
         let cmd = apply_scatter(
-            &mut map, &pattern, 10, 10, 3, 0.5, 0, false, false, &mut rng,
+            &mut map, None, &pattern, 10, 10, 3, 0.5, 0, false, false, &mut rng,
         );
         assert!(cmd.features.is_empty());
         assert!(cmd.tile_changes.is_empty());
@@ -194,7 +199,7 @@ mod tests {
         let pattern = tree_pattern();
         let mut rng = fastrand::Rng::with_seed(1);
         let cmd = apply_scatter(
-            &mut map, &pattern, 10, 10, 3, 0.0, 0, false, false, &mut rng,
+            &mut map, None, &pattern, 10, 10, 3, 0.0, 0, false, false, &mut rng,
         );
         assert!(cmd.features.is_empty());
         assert!(map.features.is_empty());
@@ -206,7 +211,7 @@ mod tests {
         let pattern = tree_pattern();
         let mut rng = fastrand::Rng::with_seed(1);
         let cmd = apply_scatter(
-            &mut map, &pattern, 10, 10, 0, 0.5, 0, false, false, &mut rng,
+            &mut map, None, &pattern, 10, 10, 0, 0.5, 0, false, false, &mut rng,
         );
         assert!(cmd.features.is_empty());
         assert!(map.features.is_empty());
@@ -234,7 +239,7 @@ mod tests {
         };
         let mut rng = fastrand::Rng::with_seed(7);
         let cmd = apply_scatter(
-            &mut map, &pattern, 10, 10, 4, 0.5, 0, false, false, &mut rng,
+            &mut map, None, &pattern, 10, 10, 4, 0.5, 0, false, false, &mut rng,
         );
         assert!(cmd.tile_changes.is_empty());
         assert_eq!(map.map_data.tile(10, 10).unwrap().texture, 0);
@@ -249,6 +254,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let cmd = apply_scatter(
             &mut map,
+            None,
             &pattern,
             cx,
             cy,
@@ -286,6 +292,7 @@ mod tests {
         let mut rng_low = fastrand::Rng::with_seed(1);
         let low = apply_scatter(
             &mut map_low,
+            None,
             &pattern,
             20,
             20,
@@ -301,6 +308,7 @@ mod tests {
         let mut rng_hi = fastrand::Rng::with_seed(1);
         let hi = apply_scatter(
             &mut map_hi,
+            None,
             &pattern,
             20,
             20,
@@ -326,7 +334,7 @@ mod tests {
         let pattern = tree_pattern();
         let mut rng = fastrand::Rng::with_seed(11);
         let cmd = apply_scatter(
-            &mut map, &pattern, 15, 15, 3, 0.8, 0, false, false, &mut rng,
+            &mut map, None, &pattern, 15, 15, 3, 0.8, 0, false, false, &mut rng,
         );
         let placed = cmd.features.len();
         assert!(placed > 0);
@@ -370,7 +378,7 @@ mod tests {
         };
         let mut rng = fastrand::Rng::with_seed(99);
         let cmd = apply_scatter(
-            &mut map, &pattern, 20, 20, 6, 1.0, 0, false, false, &mut rng,
+            &mut map, None, &pattern, 20, 20, 6, 1.0, 0, false, false, &mut rng,
         );
         let total = cmd.structures.len() + cmd.droids.len() + cmd.features.len();
         assert!(
@@ -387,6 +395,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let cmd = apply_scatter(
             &mut map,
+            None,
             &pattern,
             20,
             20,
@@ -423,7 +432,9 @@ mod tests {
         let mut map = make_test_map(40, 40);
         let pattern = tree_pattern();
         let mut rng = fastrand::Rng::with_seed(123);
-        let cmd = apply_scatter(&mut map, &pattern, 20, 20, 5, 1.0, 0, true, false, &mut rng);
+        let cmd = apply_scatter(
+            &mut map, None, &pattern, 20, 20, 5, 1.0, 0, true, false, &mut rng,
+        );
         assert!(cmd.features.len() > 4);
         let directions: std::collections::BTreeSet<u16> =
             cmd.features.iter().map(|f| f.direction).collect();

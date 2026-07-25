@@ -16,6 +16,7 @@ eframe = { workspace = true }
 egui = { workspace = true }
 bytemuck = { workspace = true }
 egui_dock = { workspace = true }
+egui_commonmark = { workspace = true }
 wgpu = { workspace = true }
 glam = { workspace = true }
 serde = { workspace = true }

@@ -478,6 +478,14 @@ impl Tool for GroundTypeBrushTool {
 mod tests {
     use super::*;
 
+    /// The brush mirrors its strokes via `mirror_points`, and `uses_mirror`
+    /// gates the picker and the axis overlay. If they disagree the tool mirrors
+    /// with nothing on screen to say so.
+    #[test]
+    fn ground_type_paint_shows_the_mirror_controls_it_obeys() {
+        assert!(crate::tools::ToolId::GroundTypePaint.uses_mirror());
+    }
+
     #[test]
     fn display_name_strips_prefix() {
         assert_eq!(ground_type_display_name("a_red"), "Red");

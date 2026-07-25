@@ -113,6 +113,8 @@ pub struct EditorApp {
     pub current_tileset: crate::config::Tileset,
     /// Currently selected objects (structures/droids/features/labels).
     pub selection: Selection,
+    /// Property-panel edit awaiting its undo entry once the gesture ends.
+    pub property_edit: Option<crate::ui::property_panel::PropertyEdit>,
     /// All in-flight background loading tasks (extraction, ground textures, models, etc.).
     pub rt: RuntimeTasks,
     /// Map browser dialog state.
@@ -243,6 +245,8 @@ pub struct EditorApp {
     pub update_check_rx: Option<std::sync::mpsc::Receiver<crate::update_check::UpdateInfo>>,
     /// Newer release the user could upgrade to, surfaced as a toolbar button.
     pub update_available: Option<crate::update_check::UpdateInfo>,
+    /// In-app help browser and demo-clip state.
+    pub help: crate::help::HelpState,
 }
 
 impl std::fmt::Debug for EditorApp {
@@ -262,6 +266,7 @@ impl std::fmt::Debug for EditorApp {
             .field("map_browser_open", &self.map_browser.open)
             .field("minimap", &self.minimap)
             .field("save_path", &self.save_path)
+            .field("help", &self.help)
             .finish_non_exhaustive()
     }
 }
@@ -421,6 +426,14 @@ impl EditorApp {
             .check_for_updates_on_startup
             .then(crate::update_check::spawn_check);
 
+        let help = {
+            let mut help = crate::help::HelpState::new();
+            if let Some(topic) = config.help_last_topic.as_deref() {
+                help.set_initial_topic(topic);
+            }
+            help
+        };
+
         Self {
             document: None,
             tool_state,
@@ -461,6 +474,7 @@ impl EditorApp {
             objects_dirty: false,
             current_tileset,
             selection: Selection::default(),
+            property_edit: None,
             rt: {
                 let mut rt = RuntimeTasks::new();
                 rt.extraction_progress = extraction_progress_arc;
@@ -522,6 +536,7 @@ impl EditorApp {
             has_hq_textures,
             update_check_rx,
             update_available: None,
+            help,
         }
     }
 
@@ -573,6 +588,15 @@ impl EditorApp {
         let min = slice.iter().copied().fold(f32::INFINITY, f32::min);
         let max = slice.iter().copied().fold(0.0_f32, f32::max);
         Some((avg, min, max))
+    }
+
+    /// The dock tab that currently holds focus, if any.
+    ///
+    /// Used for contextual help routing. Must not be called during the
+    /// `mem::replace(&mut app.dock, ...)` render window in `show_ui_panels`;
+    /// `update()` and keyboard dispatch run before that, so they are safe.
+    pub fn dock_focused_tab(&mut self) -> Option<DockTab> {
+        self.dock.find_active_focused().map(|(_, tab)| tab.clone())
     }
 
     /// Whether gateways should be drawn and hit-tested.
@@ -1138,6 +1162,9 @@ fn show_dialogs(ctx: &egui::Context, app: &mut EditorApp) {
     if app.settings_open {
         ui::settings_window::show_settings_window(ctx, app);
     }
+    if app.help.open {
+        crate::help::render::show_help_window(ctx, app);
+    }
     if app.permission_error_dialog.open {
         dialogs::show_permission_error_dialog(ctx, app);
     }
@@ -1167,6 +1194,17 @@ fn show_dialogs(ctx: &egui::Context, app: &mut EditorApp) {
 /// Centralized keyboard shortcut dispatch via the keymap.
 fn dispatch_keyboard_actions(ctx: &egui::Context, app: &mut EditorApp) {
     use crate::keybindings::Action;
+
+    // F1 opens contextual help. Handled here, ahead of the rebindable keymap,
+    // and gated on text focus so it doesn't fire while typing. F1 is not added
+    // to the `Action` enum: it isn't conceptually rebindable.
+    if !ctx.egui_wants_keyboard_input()
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F1))
+    {
+        let slug = crate::help::context::topic_for_context(app);
+        crate::help::open_browser_at(app, slug);
+        return;
+    }
 
     let rmb_held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     let fired = if app.keybinding_capture.is_some() {

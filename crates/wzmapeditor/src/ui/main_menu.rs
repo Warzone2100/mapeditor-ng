@@ -261,5 +261,18 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut EditorApp) {
                 ui.close();
             }
         });
+
+        ui.menu_button("Help", |ui| {
+            if ui.button("Help Topics\u{2026}").clicked() {
+                crate::help::open_browser_home(app);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("About\u{2026}").clicked() {
+                app.settings_open = true;
+                app.settings_page = crate::ui::settings_window::SettingsPage::About;
+                ui.close();
+            }
+        });
     });
 }

@@ -8,10 +8,17 @@ pub trait EditCommand: Send + Sync {
     fn undo(&self, map: &mut WzMap);
 
     /// Whether replaying this command requires rebuilding object instance
-    /// buffers. Tile-height edits return `true` so undo/redo refreshes the
-    /// sampled Y of any objects sitting on the affected tiles.
+    /// buffers, which hold every structure, droid, and feature.
+    ///
+    /// Defaults to `true` because the two mistakes are not equally costly: a
+    /// command that reports `false` while changing object geometry leaves the
+    /// viewport drawing the pre-undo transforms, whereas a needless rebuild
+    /// only spends one pass. Tile-height edits count as well, since objects
+    /// sample their Y from the terrain beneath them. Commands confined to tile
+    /// textures, or to overlays redrawn every frame (labels, gateways),
+    /// override this with `false`.
     fn dirties_objects(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -126,6 +133,52 @@ mod tests {
         fn undo(&self, _map: &mut WzMap) {
             self.counter.fetch_sub(self.delta, Ordering::Relaxed);
         }
+    }
+
+    /// A command that only touches tiles, standing in for the opt-out case.
+    struct TileOnlyCmd;
+
+    impl EditCommand for TileOnlyCmd {
+        fn execute(&self, _map: &mut WzMap) {}
+        fn undo(&self, _map: &mut WzMap) {}
+        fn dirties_objects(&self) -> bool {
+            false
+        }
+    }
+
+    /// The default has to stay `true`: a new command that forgets to answer
+    /// should over-refresh rather than leave undone geometry on screen.
+    #[test]
+    fn dirties_objects_defaults_to_true() {
+        let cmd = CounterCmd {
+            counter: std::sync::Arc::new(AtomicU32::new(0)),
+            delta: 1,
+        };
+        assert!(cmd.dirties_objects());
+    }
+
+    #[test]
+    fn compound_dirties_objects_when_any_child_does() {
+        let counter = std::sync::Arc::new(AtomicU32::new(0));
+
+        let tile_only: Vec<Box<dyn EditCommand>> =
+            vec![Box::new(TileOnlyCmd), Box::new(TileOnlyCmd)];
+        assert!(
+            !CompoundCommand::new(tile_only).dirties_objects(),
+            "a stroke of tile-only edits should not force an object rebuild"
+        );
+
+        let mixed: Vec<Box<dyn EditCommand>> = vec![
+            Box::new(TileOnlyCmd),
+            Box::new(CounterCmd {
+                counter: counter.clone(),
+                delta: 1,
+            }),
+        ];
+        assert!(
+            CompoundCommand::new(mixed).dirties_objects(),
+            "one object-touching child must dirty the whole compound"
+        );
     }
 
     #[test]

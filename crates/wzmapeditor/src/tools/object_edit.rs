@@ -207,6 +207,84 @@ fn set_object_pos(map: &mut WzMap, kind: ObjectKind, index: usize, pos: WorldPos
     }
 }
 
+/// A saved copy of a single object, holding the before/after state of a
+/// [`ReplaceObjectCommand`].
+#[derive(Debug, Clone)]
+enum ObjectValue {
+    Structure(Structure),
+    Droid(Droid),
+    Feature(Feature),
+}
+
+/// Command: overwrite an object with a saved copy of itself.
+///
+/// The property panel edits position, rotation, player, and module count with
+/// separate widgets, so a single gesture can touch more than one field. Saving
+/// the whole object collapses that into one undo step without needing a command
+/// per field.
+#[derive(Debug)]
+pub struct ReplaceObjectCommand {
+    index: usize,
+    before: ObjectValue,
+    after: ObjectValue,
+}
+
+impl ReplaceObjectCommand {
+    pub fn structure(index: usize, before: Structure, after: Structure) -> Self {
+        Self {
+            index,
+            before: ObjectValue::Structure(before),
+            after: ObjectValue::Structure(after),
+        }
+    }
+
+    pub fn droid(index: usize, before: Droid, after: Droid) -> Self {
+        Self {
+            index,
+            before: ObjectValue::Droid(before),
+            after: ObjectValue::Droid(after),
+        }
+    }
+
+    pub fn feature(index: usize, before: Feature, after: Feature) -> Self {
+        Self {
+            index,
+            before: ObjectValue::Feature(before),
+            after: ObjectValue::Feature(after),
+        }
+    }
+}
+
+impl EditCommand for ReplaceObjectCommand {
+    fn execute(&self, map: &mut WzMap) {
+        write_object(map, self.index, &self.after);
+    }
+
+    fn undo(&self, map: &mut WzMap) {
+        write_object(map, self.index, &self.before);
+    }
+}
+
+fn write_object(map: &mut WzMap, index: usize, value: &ObjectValue) {
+    match value {
+        ObjectValue::Structure(v) => {
+            if let Some(s) = map.structures.get_mut(index) {
+                *s = v.clone();
+            }
+        }
+        ObjectValue::Droid(v) => {
+            if let Some(d) = map.droids.get_mut(index) {
+                *d = v.clone();
+            }
+        }
+        ObjectValue::Feature(v) => {
+            if let Some(f) = map.features.get_mut(index) {
+                *f = v.clone();
+            }
+        }
+    }
+}
+
 fn set_object_direction(map: &mut WzMap, kind: ObjectKind, index: usize, direction: u16) {
     match kind {
         ObjectKind::Structure => {
@@ -224,5 +302,137 @@ fn set_object_direction(map: &mut WzMap, kind: ObjectKind, index: usize, directi
                 f.direction = direction;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn structure() -> Structure {
+        Structure {
+            name: "A0CommandCentre".into(),
+            position: WorldPos { x: 256, y: 256 },
+            direction: 0,
+            player: 0,
+            modules: 0,
+            id: Some(1),
+        }
+    }
+
+    #[test]
+    fn replace_object_restores_every_edited_field() {
+        let mut map = WzMap::new("test", 8, 8);
+        let before = structure();
+        map.structures.push(before.clone());
+
+        let mut after = before.clone();
+        after.position = WorldPos { x: 512, y: 768 };
+        after.direction = 16384;
+        after.player = 3;
+        after.modules = 2;
+
+        let cmd = ReplaceObjectCommand::structure(0, before, after);
+        cmd.execute(&mut map);
+
+        let edited = &map.structures[0];
+        assert_eq!(edited.position.x, 512);
+        assert_eq!(edited.direction, 16384);
+        assert_eq!(edited.player, 3);
+        assert_eq!(edited.modules, 2);
+
+        cmd.undo(&mut map);
+
+        let restored = &map.structures[0];
+        assert_eq!(restored.position.x, 256);
+        assert_eq!(restored.direction, 0);
+        assert_eq!(restored.player, 0);
+        assert_eq!(restored.modules, 0);
+    }
+
+    fn droid() -> Droid {
+        Droid {
+            name: "ConstructionDroid".into(),
+            position: WorldPos { x: 256, y: 256 },
+            direction: 0,
+            player: 0,
+            id: Some(2),
+        }
+    }
+
+    fn feature() -> Feature {
+        Feature {
+            name: "OilResource".into(),
+            position: WorldPos { x: 256, y: 256 },
+            direction: 0,
+            id: Some(3),
+            player: Some(0),
+        }
+    }
+
+    /// Undo/redo only refresh instance buffers when the replayed command says
+    /// so, so any command that adds, removes, moves, rotates or re-owns an
+    /// object has to report `true` or the viewport keeps drawing the state the
+    /// user just undid.
+    #[test]
+    fn every_object_command_dirties_object_buffers() {
+        let commands: Vec<(&str, Box<dyn EditCommand>)> = vec![
+            (
+                "PlaceStructureCommand",
+                Box::new(PlaceStructureCommand {
+                    structure: structure(),
+                }),
+            ),
+            (
+                "PlaceDroidCommand",
+                Box::new(PlaceDroidCommand { droid: droid() }),
+            ),
+            (
+                "PlaceFeatureCommand",
+                Box::new(PlaceFeatureCommand { feature: feature() }),
+            ),
+            (
+                "DeleteObjectCommand",
+                Box::new(DeleteObjectCommand::structure(0, structure())),
+            ),
+            (
+                "MoveObjectCommand",
+                Box::new(MoveObjectCommand {
+                    kind: ObjectKind::Structure,
+                    index: 0,
+                    old_pos: WorldPos { x: 256, y: 256 },
+                    new_pos: WorldPos { x: 512, y: 512 },
+                }),
+            ),
+            (
+                "RotateObjectCommand",
+                Box::new(RotateObjectCommand {
+                    kind: ObjectKind::Structure,
+                    index: 0,
+                    old_direction: 0,
+                    new_direction: 16384,
+                }),
+            ),
+            (
+                "ReplaceObjectCommand",
+                Box::new(ReplaceObjectCommand::structure(0, structure(), structure())),
+            ),
+        ];
+
+        for (name, cmd) in commands {
+            assert!(
+                cmd.dirties_objects(),
+                "{name} changes object geometry, so undo must rebuild instance buffers"
+            );
+        }
+    }
+
+    #[test]
+    fn replace_object_ignores_a_stale_index() {
+        let mut map = WzMap::new("test", 8, 8);
+        let cmd = ReplaceObjectCommand::structure(7, structure(), structure());
+        cmd.execute(&mut map);
+        cmd.undo(&mut map);
+        assert!(map.structures.is_empty());
     }
 }

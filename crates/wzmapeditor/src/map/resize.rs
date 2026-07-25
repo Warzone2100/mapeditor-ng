@@ -125,4 +125,14 @@ mod tests {
         assert_eq!(map.map_data.width, after_first.map_data.width);
         assert_eq!(map.structures.len(), after_first.structures.len());
     }
+
+    #[test]
+    fn resize_dirties_object_buffers() {
+        let mut map = map_with_one_struct();
+        let (cmd, _) = ResizeMapCommand::apply(&mut map, 8, 8, 0, 0);
+        assert!(
+            cmd.dirties_objects(),
+            "a resize swaps the whole map, so every object instance is stale"
+        );
+    }
 }

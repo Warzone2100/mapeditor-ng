@@ -56,6 +56,16 @@
         }, true);
     </script>
 
+    <!-- F1 is the editor's contextual-help key, but browsers treat it as their
+         own help shortcut and would open that instead. Cancel only the default
+         action: propagation must continue so eframe's own listener still hands
+         the key to egui. -->
+    <script>
+        addEventListener("keydown", function (e) {
+            if (e.key === "F1") e.preventDefault();
+        }, true);
+    </script>
+
     <style>
         html,
         body {

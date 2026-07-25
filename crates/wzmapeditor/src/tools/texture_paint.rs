@@ -35,6 +35,12 @@ impl EditCommand for TexturePaintCommand {
             }
         }
     }
+
+    /// Textures carry the tile's rotation and flip bits but not its height, so
+    /// no object's sampled Y can move.
+    fn dirties_objects(&self) -> bool {
+        false
+    }
 }
 
 /// Orientation options for texture painting.
@@ -510,6 +516,15 @@ impl Tool for TexturePaintTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Painting rewrites the texture word, which carries rotation and flip but
+    /// not height, so it must opt out of the object rebuild the trait defaults to.
+    #[test]
+    fn texture_paint_leaves_object_buffers_alone() {
+        let mut map = MapData::new(10, 10);
+        let cmd = apply_texture_paint(&mut map, 5, 5, 0, 42);
+        assert!(!cmd.dirties_objects());
+    }
 
     #[test]
     fn test_paint_single_tile() {

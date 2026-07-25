@@ -23,6 +23,12 @@ impl EditCommand for AddLabelCommand {
             map.labels.remove(idx);
         }
     }
+
+    /// Labels are painted as an overlay every frame rather than held in the
+    /// object instance buffers, so replaying one never needs a rebuild.
+    fn dirties_objects(&self) -> bool {
+        false
+    }
 }
 
 pub struct DeleteLabelCommand {
@@ -43,6 +49,10 @@ impl EditCommand for DeleteLabelCommand {
         map.labels
             .insert(idx, (self.saved_key.clone(), self.saved_label.clone()));
     }
+
+    fn dirties_objects(&self) -> bool {
+        false
+    }
 }
 
 pub struct MoveLabelCommand {
@@ -62,6 +72,10 @@ impl EditCommand for MoveLabelCommand {
         if let Some((_, label)) = map.labels.get_mut(self.index) {
             *label = self.old_label.clone();
         }
+    }
+
+    fn dirties_objects(&self) -> bool {
+        false
     }
 }
 

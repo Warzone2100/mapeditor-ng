@@ -174,9 +174,11 @@ impl StampTool {
         let stamp_terrain = self.stamp_terrain;
         let stamp_objects = self.stamp_objects;
         let mut commands: Vec<Box<dyn EditCommand>> = Vec::new();
+        let mut skipped = 0usize;
         for &(mx, my) in &mirror_pts {
-            let cmd = apply_stamp(
+            let (cmd, cmd_skipped) = apply_stamp(
                 ctx.map,
+                ctx.stats,
                 &pattern,
                 mx,
                 my,
@@ -184,6 +186,7 @@ impl StampTool {
                 stamp_terrain,
                 stamp_objects,
             );
+            skipped += cmd_skipped;
             if stamp_command_non_empty(&cmd) {
                 commands.push(Box::new(cmd));
             }
@@ -195,7 +198,13 @@ impl StampTool {
         if stamp_objects {
             ctx.mark_objects_dirty();
         }
-        ctx.log("Stamped pattern".to_string());
+        if skipped > 0 {
+            ctx.log(format!(
+                "Stamped pattern ({skipped} object(s) skipped: the ground could not carry them)"
+            ));
+        } else {
+            ctx.log("Stamped pattern".to_string());
+        }
         pack_commands_as_one(commands)
     }
 
@@ -218,6 +227,7 @@ impl StampTool {
         for &(mx, my) in &mirror_pts {
             let cmd = apply_scatter(
                 ctx.map,
+                ctx.stats,
                 base_pattern,
                 mx,
                 my,

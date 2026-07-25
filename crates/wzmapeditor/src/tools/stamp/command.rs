@@ -83,13 +83,27 @@ pub(super) struct ObjectAccum {
 }
 
 impl ObjectAccum {
+    /// Place `template` unless the ground under `position` cannot carry it.
+    ///
+    /// Returns `false` when the object was skipped. Only the terrain rules are
+    /// applied (see [`crate::tools::placement::terrain_supports_structure`]):
+    /// captured objects legitimately sit next to each other, so the overlap and
+    /// spacing rules that govern hand placement would reject most of a cluster.
     pub(super) fn place(
         &mut self,
         map: &mut WzMap,
+        stats: Option<&wz_stats::StatsDatabase>,
         template: &StampObject,
         position: WorldPos,
         direction: u16,
-    ) {
+    ) -> bool {
+        let (name, _, _, _) = template.name_offset_dir();
+        if !crate::tools::placement::terrain_supports_structure(
+            map, stats, name, direction, position.x, position.y,
+        ) {
+            return false;
+        }
+
         match push_object(map, template, position, direction) {
             PushedObject::Structure(idx, s) => {
                 self.structure_indices.push(idx);
@@ -104,6 +118,7 @@ impl ObjectAccum {
                 self.features.push(f);
             }
         }
+        true
     }
 
     pub(super) fn into_command(

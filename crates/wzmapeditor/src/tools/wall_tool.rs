@@ -26,6 +26,8 @@ use wz_maplib::constants::TILE_UNITS;
 use wz_maplib::objects::{Structure, WorldPos};
 
 use crate::map::history::{CompoundCommand, EditCommand};
+use crate::tools::MirrorMode;
+use crate::tools::mirror;
 use crate::tools::object_edit::{DeleteObjectCommand, PlaceStructureCommand};
 use crate::tools::trait_def::{Tool, ToolCtx};
 
@@ -275,13 +277,19 @@ pub(crate) fn extend_stroke(
     map: &mut wz_maplib::WzMap,
     player: i8,
     cross_corners: bool,
+    mirror_mode: MirrorMode,
 ) {
     let path = match state.last_tile {
         Some(prev) => bresenham_4_connected(prev, next),
         None => vec![next],
     };
+    let (map_w, map_h) = (map.map_data.width, map.map_data.height);
     for tile in path {
-        place_wall_tile(state, family, tile, stats, map, player, cross_corners);
+        // Each reflected tile derives its own junction shape and rotation from
+        // its own neighbor mask, so nothing here has to mirror a direction.
+        for (mx, my) in mirror::mirror_points(tile.0, tile.1, map_w, map_h, mirror_mode) {
+            place_wall_tile(state, family, (mx, my), stats, map, player, cross_corners);
+        }
     }
     state.last_tile = Some(next);
 }
@@ -630,6 +638,7 @@ impl WallTool {
             ctx.map,
             ctx.placement_player,
             self.cross_corners,
+            ctx.mirror_mode,
         );
         ctx.mark_objects_dirty();
     }
@@ -1023,6 +1032,95 @@ mod tests {
         let cmd = tool.on_mouse_release(&mut ctx, None);
         assert!(cmd.is_some(), "release should return a CompoundCommand");
         assert!(dirty.objects, "objects dirty flag should be set");
+    }
+
+    fn wall_stats() -> wz_stats::StatsDatabase {
+        let mut stats = wz_stats::StatsDatabase::default();
+        let stat = wz_stats::structures::StructureStats {
+            id: "A0HardcreteMk1Wall".into(),
+            name: "Hardcrete Wall".into(),
+            structure_type: Some("WALL".into()),
+            width: Some(1),
+            breadth: Some(1),
+            ..Default::default()
+        };
+        stats.structures.insert("A0HardcreteMk1Wall".into(), stat);
+        stats
+    }
+
+    /// Press and release the wall tool once at `tile` on a square map of
+    /// `map_dim`, returning the resulting map and the stroke's command.
+    fn press_wall_at(
+        map_dim: u32,
+        tile: (u32, u32),
+        mirror_mode: MirrorMode,
+    ) -> (wz_maplib::WzMap, Option<Box<dyn EditCommand>>) {
+        use crate::map::history::EditHistory;
+        use crate::tools::trait_def::DirtyFlags;
+
+        let stats = wall_stats();
+        let mut map = wz_maplib::WzMap::new("test", map_dim, map_dim);
+        let mut history = EditHistory::new();
+        let mut dirty = DirtyFlags::default();
+        let mut tool = WallTool::default();
+        let mut hovered_tile: Option<(u32, u32)> = None;
+        let mut log_sink = |_msg: String| {};
+        let mut dirty_tiles = rustc_hash::FxHashSet::default();
+        let mut stroke_active = false;
+
+        let cmd = {
+            let mut ctx = ToolCtx {
+                map: &mut map,
+                history: &mut history,
+                dirty: &mut dirty,
+                stats: Some(&stats),
+                placement_player: 0,
+                mirror_mode,
+                terrain_dirty_tiles: &mut dirty_tiles,
+                stroke_active: &mut stroke_active,
+                tile_pools: &[],
+                log_sink: &mut log_sink,
+                hovered_tile: &mut hovered_tile,
+            };
+            tool.on_mouse_press(&mut ctx, tile_center_world(tile));
+            tool.on_mouse_release(&mut ctx, None)
+        };
+        (map, cmd)
+    }
+
+    #[test]
+    fn vertical_mirror_places_the_reflected_wall() {
+        let (map, _) = press_wall_at(8, (1, 4), MirrorMode::Vertical);
+        let mut xs: Vec<u32> = map
+            .structures
+            .iter()
+            .map(|s| s.position.x / TILE_UNITS)
+            .collect();
+        xs.sort_unstable();
+        assert_eq!(xs, vec![1, 6], "tile 1 mirrors to 6 on an 8-wide map");
+    }
+
+    #[test]
+    fn mirror_does_not_double_place_on_the_axis() {
+        // On a 9-wide map the vertical axis falls on tile 4, which mirrors to
+        // itself; the tile must still be painted only once.
+        let (map, _) = press_wall_at(9, (4, 4), MirrorMode::Vertical);
+        assert_eq!(map.structures.len(), 1);
+    }
+
+    #[test]
+    fn undo_reverts_every_reflected_copy_in_one_step() {
+        let (mut map, cmd) = press_wall_at(8, (1, 4), MirrorMode::Both);
+        assert_eq!(
+            map.structures.len(),
+            4,
+            "Both mirrors the tile into all four quadrants"
+        );
+        cmd.expect("a stroke returns a command").undo(&mut map);
+        assert!(
+            map.structures.is_empty(),
+            "one undo clears every reflected copy"
+        );
     }
 
     #[test]

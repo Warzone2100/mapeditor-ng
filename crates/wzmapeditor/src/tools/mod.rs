@@ -56,9 +56,11 @@ impl ToolId {
             self,
             Self::HeightBrush
                 | Self::TexturePaint
+                | Self::GroundTypePaint
                 | Self::ObjectPlace
                 | Self::Stamp
                 | Self::VertexSculpt
+                | Self::WallPlacement
         )
     }
 }

@@ -101,6 +101,9 @@ pub(super) fn load_map(
     app.water_dirty = true;
     app.minimap.dirty = true;
     app.selection.clear();
+    // Object indices belong to the outgoing map, so any pending edit would
+    // record its undo entry against the wrong object.
+    app.property_edit = None;
     app.balance.clear();
     app.autosave.cleanup();
     app.autosave.reset_timer();

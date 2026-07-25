@@ -16,6 +16,7 @@ mod balance;
 mod config;
 mod designer;
 mod generator;
+mod help;
 mod icon;
 mod keybindings;
 mod launch_sentinel;

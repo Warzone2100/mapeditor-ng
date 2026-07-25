@@ -40,10 +40,6 @@ impl EditCommand for HeightEditCommand {
             }
         }
     }
-
-    fn dirties_objects(&self) -> bool {
-        true
-    }
 }
 
 /// Returns `(coords, old_heights)` for in-bounds tiles within a circular radius.

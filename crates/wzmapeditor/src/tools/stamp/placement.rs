@@ -80,15 +80,21 @@ pub(super) fn push_object(
 ///
 /// The three are independent. Enabling only `stamp_terrain` stamps the captured
 /// heightfield while leaving existing textures untouched.
+///
+/// Returns the undo command plus the number of objects skipped because the
+/// ground could not carry them. Tiles are written before objects are placed, so
+/// a stamp that brings its own terrain is validated against that new terrain
+/// rather than whatever was there before.
 pub(super) fn apply_stamp(
     map: &mut WzMap,
+    stats: Option<&wz_stats::StatsDatabase>,
     pattern: &StampPattern,
     target_x: u32,
     target_y: u32,
     stamp_tiles: bool,
     stamp_terrain: bool,
     stamp_objects: bool,
-) -> StampCommand {
+) -> (StampCommand, usize) {
     let map_w = map.map_data.width;
     let map_h = map.map_data.height;
 
@@ -121,6 +127,7 @@ pub(super) fn apply_stamp(
     }
 
     let mut accum = ObjectAccum::default();
+    let mut skipped = 0usize;
 
     if stamp_objects {
         let origin_x = (target_x * TILE_UNITS) as i32;
@@ -132,11 +139,13 @@ pub(super) fn apply_stamp(
                 x: (origin_x + offset_x) as u32,
                 y: (origin_y + offset_y) as u32,
             };
-            accum.place(map, obj, position, direction);
+            if !accum.place(map, stats, obj, position, direction) {
+                skipped += 1;
+            }
         }
     }
 
-    accum.into_command(tile_changes)
+    (accum.into_command(tile_changes), skipped)
 }
 
 #[cfg(test)]
@@ -248,6 +257,131 @@ mod tests {
         assert_eq!(value.direction, 0x8000);
     }
 
+    fn factory_stats() -> wz_stats::StatsDatabase {
+        let mut stats = wz_stats::StatsDatabase::default();
+        stats.structures.insert(
+            "Factory".into(),
+            wz_stats::structures::StructureStats {
+                id: "Factory".into(),
+                name: "Factory".into(),
+                structure_type: Some("FACTORY".into()),
+                width: Some(1),
+                breadth: Some(1),
+                ..Default::default()
+            },
+        );
+        stats
+    }
+
+    fn factory_at(offset_x: i32, offset_y: i32) -> StampObject {
+        StampObject::Structure {
+            name: "Factory".into(),
+            offset_x,
+            offset_y,
+            direction: 0,
+            player: 0,
+            modules: 0,
+        }
+    }
+
+    /// Half a tile: puts a stamped object on the target tile's centre.
+    const HALF_TILE: i32 = (TILE_UNITS / 2) as i32;
+
+    #[test]
+    fn stamp_skips_a_structure_the_ground_cannot_carry() {
+        let stats = factory_stats();
+        let mut map = make_test_map(20, 20);
+        // A 200-unit step across the footprint is far past MAX_INCLINE.
+        map.map_data.tile_mut(11, 11).expect("in bounds").height = 200;
+
+        let pattern = StampPattern {
+            width: 1,
+            height: 1,
+            tiles: Vec::new(),
+            objects: vec![factory_at(HALF_TILE, HALF_TILE)],
+        };
+
+        let (cmd, skipped) =
+            apply_stamp(&mut map, Some(&stats), &pattern, 10, 10, false, false, true);
+        assert_eq!(skipped, 1);
+        assert!(map.structures.is_empty());
+        assert!(cmd.structures.is_empty());
+    }
+
+    #[test]
+    fn stamp_keeps_a_cluster_hand_placement_would_reject() {
+        // Adjacent buildings fail the 1-tile spacing rule that governs hand
+        // placement, but a stamp has to reproduce the capture it was given.
+        let stats = factory_stats();
+        let mut map = make_test_map(20, 20);
+
+        let pattern = StampPattern {
+            width: 2,
+            height: 1,
+            tiles: Vec::new(),
+            objects: vec![
+                factory_at(HALF_TILE, HALF_TILE),
+                factory_at(HALF_TILE + TILE_UNITS as i32, HALF_TILE),
+            ],
+        };
+
+        let (_, skipped) =
+            apply_stamp(&mut map, Some(&stats), &pattern, 10, 10, false, false, true);
+        assert_eq!(skipped, 0);
+        assert_eq!(map.structures.len(), 2);
+    }
+
+    #[test]
+    fn stamp_dirties_object_buffers() {
+        let mut map = make_test_map(20, 20);
+        let pattern = StampPattern {
+            width: 1,
+            height: 1,
+            tiles: Vec::new(),
+            objects: vec![structure_template()],
+        };
+
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 10, 10, false, false, true);
+        assert!(
+            cmd.dirties_objects(),
+            "a stamp adds objects, so undo must rebuild instance buffers"
+        );
+    }
+
+    #[test]
+    fn stamp_validates_against_the_terrain_it_writes() {
+        // The target is too steep as it stands, but the stamp flattens it on the
+        // way in. Tiles are written before objects, so the object still lands.
+        let stats = factory_stats();
+        let mut map = make_test_map(20, 20);
+        map.map_data.tile_mut(11, 11).expect("in bounds").height = 200;
+
+        let flat = (0..2)
+            .flat_map(|dy| {
+                (0..2).map(move |dx| super::super::pattern::StampTile {
+                    dx,
+                    dy,
+                    texture: 0,
+                    height: 0,
+                })
+            })
+            .collect();
+
+        let pattern = StampPattern {
+            width: 2,
+            height: 2,
+            tiles: flat,
+            objects: vec![factory_at(HALF_TILE, HALF_TILE)],
+        };
+
+        let (_, skipped) = apply_stamp(&mut map, Some(&stats), &pattern, 10, 10, false, true, true);
+        assert_eq!(
+            skipped, 0,
+            "the stamp's own heightfield makes the spot valid"
+        );
+        assert_eq!(map.structures.len(), 1);
+    }
+
     #[test]
     fn apply_stamp_tiles_only() {
         let mut map = make_test_map(10, 10);
@@ -283,7 +417,7 @@ mod tests {
             objects: Vec::new(),
         };
 
-        let cmd = apply_stamp(&mut map, &pattern, 3, 3, true, true, false);
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 3, 3, true, true, false);
         assert_eq!(cmd.tile_changes.len(), 4);
         assert_eq!(map.map_data.tile(3, 3).unwrap().texture, 42);
         assert_eq!(map.map_data.tile(4, 3).unwrap().texture, 43);
@@ -308,7 +442,7 @@ mod tests {
             objects: Vec::new(),
         };
 
-        let cmd = apply_stamp(&mut map, &pattern, 4, 4, true, true, false);
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 4, 4, true, true, false);
         assert_eq!(cmd.tile_changes.len(), 1);
         assert_eq!(map.map_data.tile(4, 4).unwrap().texture, 10);
     }
@@ -331,7 +465,7 @@ mod tests {
             }],
             objects: Vec::new(),
         };
-        let _cmd = apply_stamp(&mut map, &pattern, 1, 1, true, false, false);
+        let (_cmd, _) = apply_stamp(&mut map, None, &pattern, 1, 1, true, false, false);
         let tile = map.map_data.tile(1, 1).unwrap();
         assert_eq!(tile.texture, 42);
         assert_eq!(tile.height, 77, "terrain height must be untouched");
@@ -355,7 +489,7 @@ mod tests {
             }],
             objects: Vec::new(),
         };
-        let _cmd = apply_stamp(&mut map, &pattern, 1, 1, false, true, false);
+        let (_cmd, _) = apply_stamp(&mut map, None, &pattern, 1, 1, false, true, false);
         let tile = map.map_data.tile(1, 1).unwrap();
         assert_eq!(tile.texture, 5, "texture must be untouched");
         assert_eq!(tile.height, 200);
@@ -381,7 +515,7 @@ mod tests {
             objects: Vec::new(),
         };
 
-        let cmd = apply_stamp(&mut map, &pattern, 3, 3, true, true, false);
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 3, 3, true, true, false);
         assert_eq!(map.map_data.tile(3, 3).unwrap().texture, 42);
 
         cmd.undo(&mut map);
@@ -406,7 +540,7 @@ mod tests {
         };
 
         assert!(map.features.is_empty());
-        let cmd = apply_stamp(&mut map, &pattern, 5, 5, false, false, true);
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 5, 5, false, false, true);
         assert_eq!(map.features.len(), 1);
         assert_eq!(map.features[0].position.x, 5 * 128 + 64);
 
@@ -433,7 +567,7 @@ mod tests {
         };
 
         let mut map = map;
-        let cmd = apply_stamp(&mut map, &pattern, 0, 0, true, true, false);
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 0, 0, true, true, false);
         assert!(
             cmd.tile_changes.is_empty(),
             "no-op stamp should produce zero tile changes"
@@ -462,7 +596,7 @@ mod tests {
             }],
         };
 
-        let cmd = apply_stamp(&mut map, &pattern, 2, 2, true, true, true);
+        let (cmd, _) = apply_stamp(&mut map, None, &pattern, 2, 2, true, true, true);
         assert_eq!(map.map_data.tile(2, 2).unwrap().texture, 55);
         assert_eq!(map.structures.len(), 1);
 
@@ -491,7 +625,7 @@ mod tests {
         }
 
         let pat = capture_pattern(&map, 1, 1, 2, 2);
-        let _cmd = apply_stamp(&mut map, &pat, 5, 5, true, true, false);
+        let (_cmd, _) = apply_stamp(&mut map, None, &pat, 5, 5, true, true, false);
 
         for dy in 0..2u32 {
             for dx in 0..2u32 {
@@ -536,7 +670,7 @@ mod tests {
             ],
         };
 
-        let _cmd = apply_stamp(&mut map, &pattern, 0, 0, false, false, true);
+        let (_cmd, _) = apply_stamp(&mut map, None, &pattern, 0, 0, false, false, true);
         assert!(map.structures[0].id.is_none());
         assert!(map.droids[0].id.is_none());
         assert!(map.features[0].id.is_none());

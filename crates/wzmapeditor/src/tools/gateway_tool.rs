@@ -21,6 +21,11 @@ impl EditCommand for AddGatewayCommand {
     fn undo(&self, map: &mut WzMap) {
         map.map_data.gateways.pop();
     }
+
+    /// Gateways are drawn as overlay lines each frame, not as object instances.
+    fn dirties_objects(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -39,6 +44,36 @@ impl EditCommand for DeleteGatewayCommand {
     fn undo(&self, map: &mut WzMap) {
         let idx = self.index.min(map.map_data.gateways.len());
         map.map_data.gateways.insert(idx, self.saved);
+    }
+
+    fn dirties_objects(&self) -> bool {
+        false
+    }
+}
+
+/// Command: overwrite a gateway's endpoints with a saved copy.
+#[derive(Debug)]
+pub struct ReplaceGatewayCommand {
+    pub index: usize,
+    pub before: Gateway,
+    pub after: Gateway,
+}
+
+impl EditCommand for ReplaceGatewayCommand {
+    fn execute(&self, map: &mut WzMap) {
+        if let Some(gw) = map.map_data.gateways.get_mut(self.index) {
+            *gw = self.after;
+        }
+    }
+
+    fn undo(&self, map: &mut WzMap) {
+        if let Some(gw) = map.map_data.gateways.get_mut(self.index) {
+            *gw = self.before;
+        }
+    }
+
+    fn dirties_objects(&self) -> bool {
+        false
     }
 }
 
@@ -131,6 +166,37 @@ mod tests {
             x: tile.0 * TILE_UNITS + TILE_UNITS / 2,
             y: tile.1 * TILE_UNITS + TILE_UNITS / 2,
         }
+    }
+
+    #[test]
+    fn replace_gateway_round_trips_endpoints() {
+        let mut map = WzMap::new("test", 8, 8);
+        let before = Gateway {
+            x1: 1,
+            y1: 2,
+            x2: 3,
+            y2: 4,
+        };
+        let after = Gateway {
+            x1: 5,
+            y1: 6,
+            x2: 7,
+            y2: 7,
+        };
+        map.map_data.gateways.push(before);
+
+        let cmd = ReplaceGatewayCommand {
+            index: 0,
+            before,
+            after,
+        };
+        cmd.execute(&mut map);
+        assert_eq!(map.map_data.gateways[0].x1, 5);
+        assert_eq!(map.map_data.gateways[0].y2, 7);
+
+        cmd.undo(&mut map);
+        assert_eq!(map.map_data.gateways[0].x1, 1);
+        assert_eq!(map.map_data.gateways[0].y2, 4);
     }
 
     #[test]

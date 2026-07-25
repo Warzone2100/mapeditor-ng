@@ -165,11 +165,72 @@ pub fn validate_placement(
         return true;
     };
 
+    let stype = struct_stats.structure_type.as_deref();
+
+    if !terrain_supports_structure(map, stats, obj_name, placement_direction, world_x, world_z) {
+        return false;
+    }
+
+    // A resource extractor skips the terrain/slope/spacing/overlap checks
+    // that apply to other buildings (WZ2100 structure.cpp `validLocation`,
+    // dedicated `REF_RESOURCE_EXTRACTOR` case). Placement adds the oil-resource
+    // feature underneath, so it needs no pre-existing oil here.
+    if stype == Some(RESOURCE_EXTRACTOR_TYPE) {
+        return true;
+    }
+
+    let (top_x, top_z, size_x, size_z) =
+        structure_footprint(struct_stats, placement_direction, world_x, world_z);
+
+    let pack_this = structure_packability(Some(stype.unwrap_or("")));
+    let incoming_combines_with_wall = struct_stats.combines_with_wall;
+
+    let occupied = build_occupancy_set(map, stats);
+
+    for tz in top_z..top_z + size_z {
+        for tx in top_x..top_x + size_x {
+            if let Some(occ) = occupied.get(&(tx, tz)) {
+                if incoming_combines_with_wall && occ.is_wall {
+                    continue;
+                }
+                return false;
+            }
+        }
+    }
+
+    let border_x0 = top_x.saturating_sub(1);
+    let border_z0 = top_z.saturating_sub(1);
+    let border_x1 = (top_x + size_x + 1).min(map_data.width);
+    let border_z1 = (top_z + size_z + 1).min(map_data.height);
+
+    for tz in border_z0..border_z1 {
+        for tx in border_x0..border_x1 {
+            if tx >= top_x && tx < top_x + size_x && tz >= top_z && tz < top_z + size_z {
+                continue;
+            }
+            if let Some(occ) = occupied.get(&(tx, tz))
+                && (pack_this as u16 + occ.packability as u16) > 3
+            {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Top-left tile and tile size of a structure's footprint at a snapped
+/// position. A 90-degree rotation swaps width and breadth.
+fn structure_footprint(
+    struct_stats: &wz_stats::structures::StructureStats,
+    placement_direction: u16,
+    world_x: u32,
+    world_z: u32,
+) -> (u32, u32, u32, u32) {
     let (width, breadth) = (
         struct_stats.width.unwrap_or(1),
         struct_stats.breadth.unwrap_or(1),
     );
-    let stype = struct_stats.structure_type.as_deref();
 
     let snap_dir = placement_direction.wrapping_add(0x2000) & 0xC000;
     let (size_x, size_z) = if snap_dir == 0x4000 || snap_dir == 0xC000 {
@@ -180,8 +241,38 @@ pub fn validate_placement(
 
     let center_tx = world_x >> 7;
     let center_tz = world_z >> 7;
-    let top_x = center_tx.saturating_sub(size_x / 2);
-    let top_z = center_tz.saturating_sub(size_z / 2);
+    (
+        center_tx.saturating_sub(size_x / 2),
+        center_tz.saturating_sub(size_z / 2),
+        size_x,
+        size_z,
+    )
+}
+
+/// Whether the ground at a snapped position can carry `placement_object`.
+///
+/// This is the terrain-only half of [`validate_placement`]: the map-edge
+/// buffer, water and cliff faces, and slope. It deliberately leaves out the
+/// overlap and spacing rules, because the stamp tool reproduces a captured
+/// cluster whose members legitimately sit next to each other — and often on top
+/// of the capture source. Anything that is not a known structure stat (droids,
+/// features) is unconstrained by terrain and returns true.
+pub fn terrain_supports_structure(
+    map: &wz_maplib::WzMap,
+    stats: Option<&wz_stats::StatsDatabase>,
+    placement_object: &str,
+    placement_direction: u16,
+    world_x: u32,
+    world_z: u32,
+) -> bool {
+    let map_data = &map.map_data;
+
+    let Some(struct_stats) = stats.and_then(|s| s.structures.get(placement_object)) else {
+        return true;
+    };
+    let stype = struct_stats.structure_type.as_deref();
+    let (top_x, top_z, size_x, size_z) =
+        structure_footprint(struct_stats, placement_direction, world_x, world_z);
 
     if top_x < TOO_NEAR_EDGE
         || top_z < TOO_NEAR_EDGE
@@ -191,10 +282,6 @@ pub fn validate_placement(
         return false;
     }
 
-    // A resource extractor skips the terrain/slope/spacing/overlap checks
-    // that apply to other buildings (WZ2100 structure.cpp `validLocation`,
-    // dedicated `REF_RESOURCE_EXTRACTOR` case). Placement adds the oil-resource
-    // feature underneath, so it needs no pre-existing oil here.
     if stype == Some(RESOURCE_EXTRACTOR_TYPE) {
         return true;
     }
@@ -238,40 +325,6 @@ pub fn validate_placement(
                 if max_h - min_h > MAX_INCLINE {
                     return false;
                 }
-            }
-        }
-    }
-
-    let pack_this = structure_packability(Some(stype.unwrap_or("")));
-    let incoming_combines_with_wall = struct_stats.combines_with_wall;
-
-    let occupied = build_occupancy_set(map, stats);
-
-    for tz in top_z..top_z + size_z {
-        for tx in top_x..top_x + size_x {
-            if let Some(occ) = occupied.get(&(tx, tz)) {
-                if incoming_combines_with_wall && occ.is_wall {
-                    continue;
-                }
-                return false;
-            }
-        }
-    }
-
-    let border_x0 = top_x.saturating_sub(1);
-    let border_z0 = top_z.saturating_sub(1);
-    let border_x1 = (top_x + size_x + 1).min(map_data.width);
-    let border_z1 = (top_z + size_z + 1).min(map_data.height);
-
-    for tz in border_z0..border_z1 {
-        for tx in border_x0..border_x1 {
-            if tx >= top_x && tx < top_x + size_x && tz >= top_z && tz < top_z + size_z {
-                continue;
-            }
-            if let Some(occ) = occupied.get(&(tx, tz))
-                && (pack_this as u16 + occ.packability as u16) > 3
-            {
-                return false;
             }
         }
     }

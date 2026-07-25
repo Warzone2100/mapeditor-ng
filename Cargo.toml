@@ -21,6 +21,7 @@ eframe = { version = "0.35", features = ["wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 egui = "0.35"
 egui_dock = { version = "0.20", features = ["serde"] }
+egui_commonmark = { version = "0.24", default-features = false, features = ["pulldown_cmark"] }
 wgpu = "29"
 glam = { version = "0.33", default-features = false, features = ["std", "serde"] }
 serde = { version = "1", features = ["derive"] }

@@ -541,61 +541,74 @@ pub(super) fn prepare_object_rendering(
     // sees the actual junction snap before clicking.
     if app.tool_state.active_tool == ToolId::WallPlacement
         && let Some(wt) = app.tool_state.wall_tool()
-        && let (Some(family), Some((tx, ty))) = (wt.family(), wt.hover_tile())
-        && tx < map_data.width
-        && ty < map_data.height
+        && let (Some(family), Some(hover)) = (wt.family(), wt.hover_tile())
         && let Some(stats) = stats_ref_structs
     {
-        let shape = wall_shape_from_index(&wall_tiles, &family.base, (tx, ty));
-        // Cross-corners L picks the family's CWall PIE directly so the ghost
-        // matches what gets saved. Other shapes use the live render's
-        // resolver.
-        let resolved: Option<(String, u16)> = if wt.cross_corners()
-            && shape.wall_type == tools::wall_tool::WALL_TYPE_L_CORNER
-            && tools::wall_tool::family_has_cross_corner(&family.base)
-            && let Some((corner_name, _)) = tools::wall_tool::corner_wall_for(&family.base)
-            && let Some(corner_stat) = stats.structures.get(corner_name)
-            && let Some(m) = corner_stat.pie_model()
-        {
-            Some((m.to_owned(), 0))
-        } else if let Some(base_stat) = stats.structures.get(&family.base) {
-            wall_model_for(base_stat, &family.base, shape.wall_type, stats_ref_structs)
-                .map(|(m, off)| (m, shape.direction.wrapping_add(off)))
-        } else {
-            None
-        };
+        // One ghost per mirrored tile: each resolves its own variant, so the
+        // preview matches what the stroke would place on that side.
+        let targets = tools::mirror::mirror_points(
+            hover.0,
+            hover.1,
+            map_data.width,
+            map_data.height,
+            app.tool_state.mirror_mode,
+        );
+        for (tx, ty) in targets {
+            if tx >= map_data.width || ty >= map_data.height {
+                continue;
+            }
 
-        if let Some((imd, dir)) = resolved {
-            // Skip the ghost when the cursor sits on a tile that already
-            // has a wall from this family; the placed wall is the preview.
-            let already_has_family_wall = map.structures.iter().any(|s| {
-                let stile = (s.position.x >> 7, s.position.y >> 7);
-                if stile != (tx, ty) {
-                    return false;
+            let shape = wall_shape_from_index(&wall_tiles, &family.base, (tx, ty));
+            // Cross-corners L picks the family's CWall PIE directly so the ghost
+            // matches what gets saved. Other shapes use the live render's
+            // resolver.
+            let resolved: Option<(String, u16)> = if wt.cross_corners()
+                && shape.wall_type == tools::wall_tool::WALL_TYPE_L_CORNER
+                && tools::wall_tool::family_has_cross_corner(&family.base)
+                && let Some((corner_name, _)) = tools::wall_tool::corner_wall_for(&family.base)
+                && let Some(corner_stat) = stats.structures.get(corner_name)
+                && let Some(m) = corner_stat.pie_model()
+            {
+                Some((m.to_owned(), 0))
+            } else if let Some(base_stat) = stats.structures.get(&family.base) {
+                wall_model_for(base_stat, &family.base, shape.wall_type, stats_ref_structs)
+                    .map(|(m, off)| (m, shape.direction.wrapping_add(off)))
+            } else {
+                None
+            };
+
+            if let Some((imd, dir)) = resolved {
+                // Skip the ghost when the tile already has a wall from this
+                // family; the placed wall is the preview.
+                let already_has_family_wall = map.structures.iter().any(|s| {
+                    let stile = (s.position.x >> 7, s.position.y >> 7);
+                    if stile != (tx, ty) {
+                        return false;
+                    }
+                    if s.name == family.base {
+                        return true;
+                    }
+                    tools::wall_tool::base_wall_for_corner(&s.name) == Some(family.base.as_str())
+                });
+                if !already_has_family_wall {
+                    loader.ensure_model(&imd, renderer, device, queue);
+                    let imd_key = loader.intern(&imd);
+                    let wx = tx * wz_maplib::constants::TILE_UNITS
+                        + wz_maplib::constants::TILE_UNITS / 2;
+                    let wz = ty * wz_maplib::constants::TILE_UNITS
+                        + wz_maplib::constants::TILE_UNITS / 2;
+                    let terrain_h = crate::viewport::picking::sample_terrain_height_pub(
+                        map_data, wx as f32, wz as f32,
+                    );
+                    let angle_rad = wz_maplib::constants::direction_to_radians(dir);
+                    let translation = glam::Vec3::new(wx as f32, terrain_h, wz as f32);
+                    let model_matrix = model_matrix_from_pos_dir(translation, angle_rad);
+                    let ghost = ModelInstance {
+                        model_matrix: model_matrix.to_cols_array_2d(),
+                        team_color: [0.0_f32, 0.8, 0.0, -0.45],
+                    };
+                    instances_by_model.entry(imd_key).or_default().push(ghost);
                 }
-                if s.name == family.base {
-                    return true;
-                }
-                tools::wall_tool::base_wall_for_corner(&s.name) == Some(family.base.as_str())
-            });
-            if !already_has_family_wall {
-                loader.ensure_model(&imd, renderer, device, queue);
-                let imd_key = loader.intern(&imd);
-                let wx =
-                    tx * wz_maplib::constants::TILE_UNITS + wz_maplib::constants::TILE_UNITS / 2;
-                let wz =
-                    ty * wz_maplib::constants::TILE_UNITS + wz_maplib::constants::TILE_UNITS / 2;
-                let terrain_h = crate::viewport::picking::sample_terrain_height_pub(
-                    map_data, wx as f32, wz as f32,
-                );
-                let angle_rad = wz_maplib::constants::direction_to_radians(dir);
-                let translation = glam::Vec3::new(wx as f32, terrain_h, wz as f32);
-                let model_matrix = model_matrix_from_pos_dir(translation, angle_rad);
-                let ghost = ModelInstance {
-                    model_matrix: model_matrix.to_cols_array_2d(),
-                    team_color: [0.0_f32, 0.8, 0.0, -0.45],
-                };
-                instances_by_model.entry(imd_key).or_default().push(ghost);
             }
         }
     }

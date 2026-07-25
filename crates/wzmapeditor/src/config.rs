@@ -293,6 +293,10 @@ pub struct EditorConfig {
     /// notification stays hidden until a strictly newer version exists.
     #[serde(default)]
     pub dismissed_update_version: Option<String>,
+    /// Slug of the last help topic viewed, reopened when the Help window
+    /// is shown again.
+    #[serde(default)]
+    pub help_last_topic: Option<String>,
 }
 
 impl Default for EditorConfig {
@@ -335,6 +339,7 @@ impl Default for EditorConfig {
             default_author_name: None,
             check_for_updates_on_startup: true,
             dismissed_update_version: None,
+            help_last_topic: None,
         }
     }
 }
@@ -920,5 +925,32 @@ mod tests {
     fn wz2100_executable_returns_none_when_missing() {
         let dir = tempfile::tempdir().expect("temp dir");
         assert_eq!(wz2100_executable(dir.path()), None);
+    }
+
+    #[test]
+    fn help_last_topic_round_trips() {
+        let cfg = EditorConfig {
+            help_last_topic: Some("terrain-height-brush".to_string()),
+            ..EditorConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let parsed: EditorConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed.help_last_topic.as_deref(),
+            Some("terrain-height-brush")
+        );
+    }
+
+    #[test]
+    fn help_last_topic_defaults_on_missing() {
+        // Older configs predate this field; serde(default) keeps them loadable.
+        let json = r#"{
+            "game_install_dir": null,
+            "data_dir": null,
+            "setup_complete": false,
+            "last_opened_map": null
+        }"#;
+        let cfg: EditorConfig = serde_json::from_str(json).expect("deserialize legacy");
+        assert_eq!(cfg.help_last_topic, None);
     }
 }
