@@ -639,6 +639,28 @@ pub fn extraction_cache_dir() -> PathBuf {
         .join("base-cache")
 }
 
+/// Written into the extraction cache once the `classic.wz` and `high.wz`
+/// overlays are applied. Bumping the suffix invalidates every existing cache.
+pub const OVERLAY_MARKER: &str = ".overlays_v9";
+
+/// Whether `data_dir` is an extraction cache predating [`OVERLAY_MARKER`].
+///
+/// Deliberately limited to the editor's own cache: for a source checkout
+/// `data_dir` is the user's `data/` tree, which never carries the marker and
+/// must never be deleted.
+pub fn overlay_cache_is_stale(data_dir: &Path) -> bool {
+    stale_against_cache(data_dir, &extraction_cache_dir())
+}
+
+/// [`overlay_cache_is_stale`] with the cache location injected, so the rule is
+/// testable without touching a real profile directory.
+fn stale_against_cache(data_dir: &Path, cache_dir: &Path) -> bool {
+    data_dir == cache_dir
+        && !data_dir.join(OVERLAY_MARKER).exists()
+        && (data_dir.join("base").join("texpages").exists()
+            || data_dir.join("base").join("stats").exists())
+}
+
 /// `<config_dir>/ground-cache-v5`. Decoded RGBA ground textures (resized to
 /// 1024x1024) are stored as raw `.bin` files for instant loading without
 /// PNG/KTX2 decode overhead.
@@ -952,5 +974,37 @@ mod tests {
         }"#;
         let cfg: EditorConfig = serde_json::from_str(json).expect("deserialize legacy");
         assert_eq!(cfg.help_last_topic, None);
+    }
+
+    fn extracted_tree(root: &Path) -> PathBuf {
+        let dir = root.join("data");
+        fs::create_dir_all(dir.join("base").join("texpages")).expect("mkdir texpages");
+        fs::create_dir_all(dir.join("base").join("stats")).expect("mkdir stats");
+        dir
+    }
+
+    #[test]
+    fn own_cache_without_marker_is_stale() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let cache = extracted_tree(root.path());
+        assert!(stale_against_cache(&cache, &cache));
+    }
+
+    #[test]
+    fn own_cache_with_marker_is_fresh() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let cache = extracted_tree(root.path());
+        fs::write(cache.join(OVERLAY_MARKER), b"").expect("write marker");
+        assert!(!stale_against_cache(&cache, &cache));
+    }
+
+    #[test]
+    fn source_checkout_is_never_stale() {
+        // An unpacked `base/` tree the editor never extracted, so it can
+        // never carry the marker.
+        let root = tempfile::tempdir().expect("temp dir");
+        let checkout = extracted_tree(root.path());
+        let cache = root.path().join("base-cache");
+        assert!(!stale_against_cache(&checkout, &cache));
     }
 }

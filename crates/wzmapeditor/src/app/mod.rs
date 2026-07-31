@@ -1019,19 +1019,15 @@ fn poll_background_tasks(ctx: &egui::Context, app: &mut EditorApp) {
     {
         let files_missing = !data_dir.join("base").join("texpages").exists()
             && !data_dir.join("base").join("stats").exists();
-        let marker_stale = !data_dir.join(".overlays_v9").exists()
-            && (data_dir.join("base").join("texpages").exists()
-                || data_dir.join("base").join("stats").exists());
+        let marker_stale = crate::config::overlay_cache_is_stale(data_dir);
         if (files_missing || marker_stale)
             && let Some(ref install_dir) = app.config.game_install_dir
         {
             let base_wz = install_dir.join("base.wz");
             if base_wz.exists() {
                 if marker_stale {
-                    log::info!("Overlay marker stale, re-extracting base.wz...");
-                    let _ = std::fs::remove_dir_all(data_dir);
-                    let ground_cache = crate::config::ground_cache_dir();
-                    let _ = std::fs::remove_dir_all(&ground_cache);
+                    log::info!("Overlay marker stale, rebuilding extraction cache");
+                    crate::startup::pipeline::discard_stale_cache(data_dir);
                 } else {
                     log::info!("Data cache missing, re-extracting base.wz...");
                 }

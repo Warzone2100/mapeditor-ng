@@ -334,8 +334,7 @@ pub(super) fn start_base_wz_extraction(
 ) {
     let output_dir = crate::config::extraction_cache_dir();
 
-    // Marker file that indicates overlays (classic.wz + high.wz) have been applied.
-    let overlay_marker = output_dir.join(".overlays_v9");
+    let overlay_marker = output_dir.join(crate::config::OVERLAY_MARKER);
 
     // Fast path: cache already populated from a previous run AND
     // overlays have been applied.

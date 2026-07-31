@@ -235,6 +235,21 @@ pub struct StartupInit {
     pub cli_path: Option<std::path::PathBuf>,
 }
 
+/// Delete the outdated extraction cache and the ground textures decoded from it.
+///
+/// Callers must gate on [`crate::config::overlay_cache_is_stale`] — it is the
+/// only thing keeping this away from a source checkout's `data/` tree.
+pub(crate) fn discard_stale_cache(data_dir: &std::path::Path) {
+    let ground_cache = crate::config::ground_cache_dir();
+    for dir in [data_dir, ground_cache.as_path()] {
+        if let Err(e) = std::fs::remove_dir_all(dir)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("Could not clear {}: {e}", dir.display());
+        }
+    }
+}
+
 /// Spawn all initial background threads and construct the startup phase.
 ///
 /// Spawns up to 4 background threads:
@@ -339,7 +354,7 @@ pub fn create_startup(config: &EditorConfig) -> StartupInit {
 
     let needs_extraction = if let Some(ref data_dir) = config.data_dir {
         let cache_dir = crate::config::extraction_cache_dir();
-        let overlay_marker = cache_dir.join(".overlays_v9");
+        let overlay_marker = cache_dir.join(crate::config::OVERLAY_MARKER);
         let cache_valid = (cache_dir.join("base").join("texpages").exists()
             || cache_dir.join("base").join("stats").exists())
             && overlay_marker.exists();
@@ -348,10 +363,7 @@ pub fn create_startup(config: &EditorConfig) -> StartupInit {
         } else {
             let files_missing = !data_dir.join("base").join("texpages").exists()
                 && !data_dir.join("base").join("stats").exists();
-            let marker_stale = !data_dir.join(".overlays_v9").exists()
-                && (data_dir.join("base").join("texpages").exists()
-                    || data_dir.join("base").join("stats").exists());
-            files_missing || marker_stale
+            files_missing || crate::config::overlay_cache_is_stale(data_dir)
         }
     } else {
         false
@@ -366,16 +378,11 @@ pub fn create_startup(config: &EditorConfig) -> StartupInit {
                 log::info!("Starting base.wz extraction during startup");
                 let output_dir = crate::config::extraction_cache_dir();
 
-                if let Some(ref data_dir) = config.data_dir {
-                    let marker_stale = !data_dir.join(".overlays_v9").exists()
-                        && (data_dir.join("base").join("texpages").exists()
-                            || data_dir.join("base").join("stats").exists());
-                    if marker_stale {
-                        log::info!("Overlay marker stale, re-extracting base.wz...");
-                        let _ = std::fs::remove_dir_all(data_dir);
-                        let ground_cache = crate::config::ground_cache_dir();
-                        let _ = std::fs::remove_dir_all(&ground_cache);
-                    }
+                if let Some(ref data_dir) = config.data_dir
+                    && crate::config::overlay_cache_is_stale(data_dir)
+                {
+                    log::info!("Overlay marker stale, rebuilding extraction cache");
+                    discard_stale_cache(data_dir);
                 }
                 if output_dir.join("texpages").exists() || output_dir.join("stats").exists() {
                     let _ = std::fs::remove_dir_all(&output_dir);
@@ -441,7 +448,7 @@ pub fn create_startup(config: &EditorConfig) -> StartupInit {
                             }
                         }
 
-                        let overlay_marker = output_dir.join(".overlays_v9");
+                        let overlay_marker = output_dir.join(crate::config::OVERLAY_MARKER);
                         let _ = std::fs::File::create(&overlay_marker);
 
                         result.map(|()| output_dir).map_err(|e| e.to_string())
@@ -596,4 +603,36 @@ pub(crate) fn transition_setup_to_loading(app: &mut EditorApp, extraction_in_fli
         extraction_started: extraction_in_flight,
         post_load_started: false,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_startup_leaves_a_source_checkout_intact() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let data = root.path().join("data");
+        std::fs::create_dir_all(data.join("base").join("texpages")).expect("mkdir texpages");
+        std::fs::create_dir_all(data.join("base").join("stats")).expect("mkdir stats");
+        std::fs::create_dir_all(data.join("music")).expect("mkdir music");
+        std::fs::write(data.join("base.wz"), b"archive").expect("write base.wz");
+        std::fs::write(data.join("music").join("menu.ogg"), b"audio").expect("write music");
+
+        // A source checkout aliases both paths onto the user's own tree, which
+        // the editor must never delete.
+        let config = EditorConfig {
+            game_install_dir: Some(data.clone()),
+            data_dir: Some(data.clone()),
+            setup_complete: true,
+            ..Default::default()
+        };
+
+        let _init = create_startup(&config);
+
+        assert!(data.join("base").join("texpages").is_dir());
+        assert!(data.join("base").join("stats").is_dir());
+        assert!(data.join("base.wz").is_file());
+        assert!(data.join("music").join("menu.ogg").is_file());
+    }
 }
