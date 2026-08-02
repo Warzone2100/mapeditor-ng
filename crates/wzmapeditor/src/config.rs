@@ -661,13 +661,14 @@ fn stale_against_cache(data_dir: &Path, cache_dir: &Path) -> bool {
             || data_dir.join("base").join("stats").exists())
 }
 
-/// `<config_dir>/ground-cache-v5`. Decoded RGBA ground textures (resized to
+/// `<config_dir>/ground-cache-v6`. Decoded RGBA ground textures (resized to
 /// 1024x1024) are stored as raw `.bin` files for instant loading without
-/// PNG/KTX2 decode overhead.
+/// PNG/KTX2 decode overhead. The version suffix invalidates caches decoded
+/// by older loaders; v5 held KTX2 layers with a spurious extra sRGB encode.
 pub fn ground_cache_dir() -> PathBuf {
     dirs_next()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("ground-cache-v5")
+        .join("ground-cache-v6")
 }
 
 /// `<config_dir>/autosave`. Temporary `.wz` archives are written here

@@ -415,12 +415,7 @@ pub(crate) fn precache_ground_textures(
                         let ktx2_path = tp.join(&ktx2_name);
                         if ktx2_path.exists() {
                             match crate::viewport::renderer::load_ktx2_as_rgba(&ktx2_path) {
-                                Ok(mut rgba) => {
-                                    let is_diffuse =
-                                        !filename.contains("_nm") && !filename.contains("_sm");
-                                    if is_diffuse {
-                                        crate::viewport::renderer::linear_to_srgb(&mut rgba);
-                                    }
+                                Ok(rgba) => {
                                     let resized = image::imageops::resize(
                                         &rgba,
                                         1024,

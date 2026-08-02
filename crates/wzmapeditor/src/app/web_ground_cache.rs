@@ -19,10 +19,23 @@ use wasm_bindgen_futures::spawn_local;
 use crate::config::Tileset;
 use crate::web::cache;
 
-/// Cache bucket for decoded ground layers. The `v1` suffix is the format
+/// Cache bucket for decoded ground layers. The version suffix is the format
 /// version: bump it when the decode/resize output changes so superseded layers
-/// are never matched.
-const CACHE_NAME: &str = "wz-ground-cache-v1";
+/// are never matched. v1 held KTX2 layers with a spurious extra sRGB encode.
+const CACHE_NAME: &str = "wz-ground-cache-v2";
+
+/// Superseded buckets removed by [`purge_superseded`].
+const STALE_CACHE_NAMES: &[&str] = &["wz-ground-cache-v1"];
+
+/// Reclaim the storage held by superseded bucket versions. Fire-and-forget;
+/// a bucket that does not exist deletes as a no-op.
+pub(crate) fn purge_superseded() {
+    spawn_local(async {
+        for name in STALE_CACHE_NAMES {
+            cache::delete_bucket(name).await;
+        }
+    });
+}
 
 /// Synthetic same-origin URL one decoded layer is cached under. `name` is the
 /// source texture filename (e.g. `page-9.png`, `tile-03_nm.png`),

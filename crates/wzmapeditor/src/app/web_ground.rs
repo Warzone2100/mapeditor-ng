@@ -153,6 +153,7 @@ pub(crate) fn maybe_start(app: &mut EditorApp) {
     }
 
     let tileset = app.current_tileset;
+    crate::app::web_ground_cache::purge_superseded();
     if std::mem::take(&mut app.rt.web_hq_skip_cache) {
         start_decode(app, tileset, HashMap::new());
         return;

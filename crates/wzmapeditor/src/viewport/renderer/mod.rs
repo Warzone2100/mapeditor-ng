@@ -37,7 +37,7 @@ use super::thumbnail::{self, ThumbnailResources};
 pub use super::thumbnail::{PREVIEW_THUMB_SIZE, THUMB_SIZE, ThumbnailEntry};
 pub(crate) use super::thumbnail::{READBACK_POOL_SIZE, ReadbackStatus, ThumbnailReadback};
 
-pub use super::texture_loader::{linear_to_srgb, load_ktx2_as_rgba_bytes};
+pub use super::texture_loader::load_ktx2_as_rgba_bytes;
 // Ground/decal texture-array decode is native-only: the web build runs at
 // Classic quality, which textures from the tile atlas rather than these arrays.
 #[cfg(not(target_arch = "wasm32"))]

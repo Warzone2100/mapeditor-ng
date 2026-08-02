@@ -91,6 +91,18 @@ pub(crate) async fn keys_with_prefix(
     out
 }
 
+/// Delete an entire named cache bucket. Used to reclaim superseded format
+/// versions; deleting a bucket that does not exist is a no-op.
+pub(crate) async fn delete_bucket(name: &str) {
+    let Some(caches) = web_sys::window().and_then(|w| w.caches().ok()) else {
+        return;
+    };
+    if caches.is_undefined() {
+        return;
+    }
+    let _ = JsFuture::from(caches.delete(name)).await;
+}
+
 /// Delete the entry an enumerated request points at. Returns whether one was
 /// removed.
 pub(crate) async fn delete_request(cache: &web_sys::Cache, request: &web_sys::Request) -> bool {

@@ -403,9 +403,7 @@ pub(super) fn start_base_wz_extraction(
 
             // Overlay high.wz textures for High/Medium quality terrain.
             // Extract everything - ground diffuse, normal/specular maps,
-            // 256px decal tiles, ground type definitions. high.wz ground
-            // textures are in linear color space and converted to sRGB
-            // during loading via `linear_to_srgb`.
+            // 256px decal tiles, ground type definitions.
             if let Some(ref hwz) = high_wz
                 && hwz.exists()
             {

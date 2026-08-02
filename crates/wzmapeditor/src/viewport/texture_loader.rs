@@ -181,16 +181,13 @@ pub fn load_decal_texture_data_from_wz<R: std::io::Read + std::io::Seek>(
         let ktx2_filename = format!("tile-{i:02}.ktx2");
 
         // Priority 1: HQ 256px KTX2 tiles from high.wz (extracted to hw-256 dir).
-        // high.wz KTX2 tiles are encoded in linear color space (unlike base.wz
-        // ground KTX2 which is sRGB). Encode to sRGB so every diffuse tile
-        // reaches the shader on the same curve.
+        // The KTX2 data is sRGB-encoded like the PNGs it was built from
+        // (upstream basis-encodes diffuse without `-linear`), so the transcoded
+        // bytes are used as-is, exactly as the game samples them.
         let rgba_opt = assets
             .bytes(&tileset_256_rel.join(&ktx2_filename))
             .and_then(|bytes| match load_ktx2_as_rgba_bytes(&bytes) {
-                Ok(mut rgba) => {
-                    linear_to_srgb(&mut rgba);
-                    Some(resize_rgba(rgba, tex_size))
-                }
+                Ok(rgba) => Some(resize_rgba(rgba, tex_size)),
                 Err(e) => {
                     log::warn!("Failed to decode decal KTX2 tile-{i:02}: {e}");
                     None
@@ -237,32 +234,11 @@ pub fn load_decal_texture_data_from_wz<R: std::io::Read + std::io::Seek>(
     (data, has_alpha)
 }
 
-/// Convert an RGBA image from linear to sRGB color space (RGB channels only).
-///
-/// high.wz KTX2 decal tiles are encoded in linear space, while every other
-/// diffuse source ships sRGB-encoded bytes. The shaders light sRGB bytes
-/// directly, so linear sources are encoded here to put them on the same
-/// curve. Note: base.wz ground KTX2 textures are already sRGB and do NOT
-/// need this conversion.
-pub fn linear_to_srgb(img: &mut image::RgbaImage) {
-    for pixel in img.pixels_mut() {
-        for c in 0..3 {
-            let linear = pixel[c] as f32 / 255.0;
-            let srgb = if linear <= 0.003_130_8 {
-                linear * 12.92
-            } else {
-                1.055 * linear.powf(1.0 / 2.4) - 0.055
-            };
-            pixel[c] = (srgb * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-        }
-    }
-}
-
 /// Decode one sRGB-encoded byte to its linear-light value in `[0, 1]`.
 ///
 /// Inverse of [`linear_to_srgb_u8`], sharing the piecewise curve and
-/// breakpoint used by [`linear_to_srgb`] so the pair round-trips. Mip
-/// downsampling averages in linear light through this decode.
+/// breakpoint so the pair round-trips. Mip downsampling averages in
+/// linear light through this decode.
 pub(crate) fn srgb_to_linear(v: u8) -> f32 {
     let s = f32::from(v) / 255.0;
     if s <= 0.040_45 {
@@ -274,8 +250,7 @@ pub(crate) fn srgb_to_linear(v: u8) -> f32 {
 
 /// Encode a linear-light value in `[0, 1]` back to an sRGB byte.
 ///
-/// Inverse of [`srgb_to_linear`]; shares the encode branch with
-/// [`linear_to_srgb`].
+/// Inverse of [`srgb_to_linear`].
 pub(crate) fn linear_to_srgb_u8(linear: f32) -> u8 {
     let srgb = if linear <= 0.003_130_8 {
         linear * 12.92
@@ -420,24 +395,20 @@ pub(crate) fn load_ground_texture(
     }
 
     // Try KTX2 first - high.wz ships HQ BasisU+Zstd compressed textures
-    // that are higher quality than the base.wz PNGs.
-    // high.wz KTX2 textures are encoded in linear color space. Diffuse
-    // textures need `linear_to_srgb` to match the other diffuse sources;
-    // normal/specular maps (_nm/_sm) carry no curve and stay linear.
+    // that are higher quality than the base.wz PNGs. The transcoded bytes
+    // carry the same encoding as the source PNGs (sRGB for diffuse, raw
+    // data for _nm/_sm) and are used as-is, exactly as the game samples
+    // them.
     let ktx2_name = filename.replace(".png", ".ktx2");
     let ktx2_rel = dir_rel.join(&ktx2_name);
-    let is_diffuse = !filename.contains("_nm") && !filename.contains("_sm");
     if let Some(bytes) = assets.bytes(&ktx2_rel) {
         match load_ktx2_as_rgba_bytes(&bytes) {
-            Ok(mut rgba) => {
+            Ok(rgba) => {
                 log::info!(
-                    "Decoded KTX2 {ktx2_name}: {}x{} (linear_to_srgb={is_diffuse})",
+                    "Decoded KTX2 {ktx2_name}: {}x{}",
                     rgba.width(),
                     rgba.height(),
                 );
-                if is_diffuse {
-                    linear_to_srgb(&mut rgba);
-                }
                 let resized_data = resize_rgba(rgba, target_size);
                 // Cache raw RGBA bytes at target size for instant loading.
                 #[cfg(not(target_arch = "wasm32"))]
@@ -477,8 +448,8 @@ pub(crate) fn load_ground_texture(
 /// Mirrors the priority chain of [`load_decal_texture_data_from_wz`] minus the
 /// `base.wz` archive step (the web VFS overlays high.wz onto the base tree and
 /// has no separate pre-overlay archive): HQ 256px KTX2, then HQ 256px PNG, then
-/// the extracted 128px PNG. high.wz KTX2 tiles are linear, so the diffuse path
-/// encodes them to sRGB to match the other sources.
+/// the extracted 128px PNG. The KTX2 tiles decode to the same sRGB bytes as
+/// the PNGs they were built from and are used as-is.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn load_decal_tile(
     assets: &dyn crate::assets::AssetSource,
@@ -492,10 +463,7 @@ pub(crate) fn load_decal_tile(
     assets
         .bytes(&tileset_256_rel.join(&ktx2_filename))
         .and_then(|bytes| match load_ktx2_as_rgba_bytes(&bytes) {
-            Ok(mut rgba) => {
-                linear_to_srgb(&mut rgba);
-                Some(resize_rgba(rgba, target_size))
-            }
+            Ok(rgba) => Some(resize_rgba(rgba, target_size)),
             Err(e) => {
                 log::warn!("Failed to decode decal KTX2 tile-{tile_index:02}: {e}");
                 None
@@ -1028,18 +996,6 @@ mod tests {
         // A layer that would spill past the end must be dropped, not clamped.
         assert!(!write_array_layer(&mut buffer, 4, &[1, 2, 3, 4]));
         assert_eq!(buffer, [9, 9, 9, 9, 9, 9]);
-    }
-
-    #[test]
-    fn linear_to_srgb_maps_endpoints_and_midpoint() {
-        let mut img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 128, 255, 200]));
-        linear_to_srgb(&mut img);
-        let px = img.get_pixel(0, 0).0;
-        assert_eq!(px[0], 0);
-        assert_eq!(px[2], 255);
-        assert_eq!(px[3], 200);
-        // Linear 128/255 encodes to ~188 in sRGB; allow a little rounding slack.
-        assert!((187..=189).contains(&px[1]), "got {}", px[1]);
     }
 
     #[test]

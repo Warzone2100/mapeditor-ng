@@ -89,21 +89,15 @@ pub(crate) fn load_texture_offline(
 ) -> Option<TexturePageData> {
     let texpages_rel = Path::new(TEXPAGES_REL);
 
-    // Diffuse KTX2 from high.wz is linear; encode to sRGB so it matches the
-    // PNG diffuse pages the shader lights directly. Normal/specular maps
-    // carry no curve and stay linear.
-    let is_diffuse = !texture_page.contains("_nm")
-        && !texture_page.contains("_sm")
-        && !texture_page.contains("_tcmask");
+    // KTX2 transcodes to the same bytes as the PNG the page was built from
+    // (sRGB for diffuse, raw data for the other maps); no conversion, the
+    // game samples them as-is.
     let ktx2_name = texture_page.replace(".png", ".ktx2");
     if let Some(bytes) = assets.bytes(&texpages_rel.join(&ktx2_name)) {
         match renderer::load_ktx2_as_rgba_bytes(&bytes) {
-            Ok(mut rgba) => {
-                if is_diffuse {
-                    renderer::linear_to_srgb(&mut rgba);
-                }
+            Ok(rgba) => {
                 log::info!(
-                    "Loaded KTX2 model texture: {ktx2_name} ({}x{}, srgb={is_diffuse})",
+                    "Loaded KTX2 model texture: {ktx2_name} ({}x{})",
                     rgba.width(),
                     rgba.height(),
                 );
