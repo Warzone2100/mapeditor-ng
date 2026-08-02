@@ -10,6 +10,9 @@
 
 use wz_maplib::MapData;
 use wz_maplib::constants::TILE_UNITS_F32;
+use wz_maplib::terrain_types::TerrainTypeData;
+
+use super::water::build_water_vertex_depths;
 
 /// Occlusion floor, matching WZ2100's clamp on `tile->ambientOcclusion`.
 /// Keeps deep valleys legible rather than black.
@@ -33,15 +36,30 @@ pub struct Lightmap {
 /// Compute the terrain lightmap from map heights.
 ///
 /// Takes no sun direction: the value is pure ambient occlusion, so it only
-/// changes when the terrain does.
-pub fn compute_lightmap(map: &MapData) -> Lightmap {
+/// changes when the terrain does. The game computes tile illumination *after*
+/// digging riverbeds, so water tiles darken toward lake centres; passing
+/// `terrain_types` applies the same dug heights here.
+pub fn compute_lightmap(map: &MapData, terrain_types: Option<&TerrainTypeData>) -> Lightmap {
     let w = map.width;
     let h = map.height;
     let mut data = vec![0u8; (w * h) as usize];
 
+    let digs = terrain_types.map(|ttp| build_water_vertex_depths(map, ttp));
+    let vw = (w + 1) as usize;
+    let mut heights = Vec::with_capacity((w * h) as usize);
     for ty in 0..h {
         for tx in 0..w {
-            let ao = tile_ambient_occlusion(map, tx, ty);
+            let base = map.tile(tx, ty).map_or(0.0, |t| f32::from(t.height));
+            let dig = digs
+                .as_ref()
+                .map_or(0.0, |d| d[ty as usize * vw + tx as usize]);
+            heights.push(base - dig);
+        }
+    }
+
+    for ty in 0..h {
+        for tx in 0..w {
+            let ao = tile_ambient_occlusion(&heights, w, h, tx, ty);
             data[(ty * w + tx) as usize] =
                 (ao * MAX_BRIGHTNESS).clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS) as u8;
         }
@@ -59,7 +77,7 @@ pub fn compute_lightmap(map: &MapData) -> Lightmap {
 /// Each direction's max elevation tangent maps to occlusion via
 /// `1 - tan(theta) / sqrt(tan^2(theta) + 1)`, equivalent to `1 - sin(theta)`,
 /// so flat horizon = 1.0 and a 90 degree wall = 0.0.
-fn tile_ambient_occlusion(map: &MapData, tx: u32, ty: u32) -> f32 {
+fn tile_ambient_occlusion(heights: &[f32], w: u32, h: u32, tx: u32, ty: u32) -> f32 {
     const DIRS: [(i32, i32); 8] = [
         (1, 0),
         (1, 1),
@@ -71,9 +89,9 @@ fn tile_ambient_occlusion(map: &MapData, tx: u32, ty: u32) -> f32 {
         (1, -1),
     ];
 
-    let w = map.width as i32;
-    let h = map.height as i32;
-    let base_h = map.tile(tx, ty).map_or(0.0, |t| t.height as f32);
+    let w_i = w as i32;
+    let h_i = h as i32;
+    let base_h = heights[(ty * w + tx) as usize];
     let mut ao_sum = 0.0f32;
 
     for &(ddx, ddy) in &DIRS {
@@ -83,13 +101,11 @@ fn tile_ambient_occlusion(map: &MapData, tx: u32, ty: u32) -> f32 {
             let sx = tx as i32 + ddx * step;
             let sy = ty as i32 + ddy * step;
 
-            if sx < 0 || sx >= w || sy < 0 || sy >= h {
+            if sx < 0 || sx >= w_i || sy < 0 || sy >= h_i {
                 break;
             }
 
-            let sample_h = map
-                .tile(sx as u32, sy as u32)
-                .map_or(0.0, |t| t.height as f32);
+            let sample_h = heights[(sy as u32 * w + sx as u32) as usize];
             let dh = sample_h - base_h;
             let dist = step as f32 * TILE_UNITS_F32;
             max_tangent = max_tangent.max(dh / dist);
@@ -105,18 +121,23 @@ fn tile_ambient_occlusion(map: &MapData, tx: u32, ty: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wz_maplib::terrain_types::TerrainType;
+
+    fn flat_heights(w: u32, h: u32) -> Vec<f32> {
+        vec![0.0; (w * h) as usize]
+    }
 
     #[test]
     fn flat_terrain_high_ao() {
-        let map = MapData::new(8, 8);
-        let ao = tile_ambient_occlusion(&map, 4, 4);
+        let heights = flat_heights(8, 8);
+        let ao = tile_ambient_occlusion(&heights, 8, 8, 4, 4);
         assert!((ao - 1.0).abs() < 0.01, "flat AO = {ao}");
     }
 
     #[test]
     fn lightmap_dimensions_match_map() {
         let map = MapData::new(16, 16);
-        let lm = compute_lightmap(&map);
+        let lm = compute_lightmap(&map, None);
         assert_eq!(lm.width, 16);
         assert_eq!(lm.height, 16);
         assert_eq!(lm.data.len(), 16 * 16);
@@ -125,7 +146,7 @@ mod tests {
     #[test]
     fn lightmap_brightness_within_range() {
         let map = MapData::new(8, 8);
-        let lm = compute_lightmap(&map);
+        let lm = compute_lightmap(&map, None);
         for ty in 0..8u32 {
             for tx in 0..8u32 {
                 let b = lm.data[(ty * 8 + tx) as usize];
@@ -142,30 +163,48 @@ mod tests {
         // Flat ground carries no sun term now, so it must sit at the ceiling
         // rather than at the sun's lambert factor.
         let map = MapData::new(8, 8);
-        let lm = compute_lightmap(&map);
+        let lm = compute_lightmap(&map, None);
         assert_eq!(lm.data[4 * 8 + 4], MAX_BRIGHTNESS as u8);
     }
 
     #[test]
     fn valley_has_lower_ao_than_flat() {
-        let mut map = MapData::new(16, 16);
+        let w = 16u32;
+        let mut heights = flat_heights(w, w);
         for ty in 0..16u32 {
             for tx in 0..16u32 {
-                if let Some(tile) = map.tile_mut(tx, ty)
-                    && (!(4..=11).contains(&tx) || !(4..=11).contains(&ty))
-                {
-                    tile.height = 200;
+                if !(4..=11).contains(&tx) || !(4..=11).contains(&ty) {
+                    heights[(ty * w + tx) as usize] = 200.0;
                 }
             }
         }
-        let ao_flat = {
-            let flat_map = MapData::new(16, 16);
-            tile_ambient_occlusion(&flat_map, 8, 8)
-        };
-        let ao_valley = tile_ambient_occlusion(&map, 8, 8);
+        let ao_flat = tile_ambient_occlusion(&flat_heights(w, w), w, w, 8, 8);
+        let ao_valley = tile_ambient_occlusion(&heights, w, w, 8, 8);
         assert!(
             ao_valley < ao_flat,
             "valley AO ({ao_valley}) should be less than flat ({ao_flat})"
+        );
+    }
+
+    #[test]
+    fn dug_riverbed_darkens_water_tiles() {
+        // An all-water lake digs deep bowls, so its lightmap must fall below
+        // the flat-ground ceiling once terrain types are supplied.
+        let mut map = MapData::new(8, 8);
+        for tile in &mut map.tiles {
+            tile.height = 100;
+            tile.texture = 7;
+        }
+        let mut terrain_types = vec![TerrainType::Sand; 8];
+        terrain_types[7] = TerrainType::Water;
+        let ttp = TerrainTypeData { terrain_types };
+
+        let lm = compute_lightmap(&map, Some(&ttp));
+        let edge = lm.data[0];
+        let shore_adjacent = lm.data[8 + 1];
+        assert!(
+            shore_adjacent < edge || lm.data.iter().any(|&b| b < MAX_BRIGHTNESS as u8),
+            "dug riverbed should occlude somewhere: edge {edge}, inner {shore_adjacent}"
         );
     }
 }

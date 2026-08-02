@@ -246,7 +246,26 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // through the pow(a, 2-a) curve on ambient and flat over the combination.
     let light = ambient_light * tile_brightness + diffuse_light * visibility;
     let light_spec = specular_light * spec_factor * visibility * (gloss * gloss);
-    var final_color = (color * light + light_spec) * lm_value;
+    var final_color = color * light + light_spec;
+
+    // Underwater murk per terrain_combined_high.frag: in-scattering fog toward
+    // deep-water grey below y = -40, which only the dug riverbed reaches.
+    // c2p.y is forced downward to dodge the divide-by-zero the GLSL original
+    // hits at horizontal view angles.
+    let c2p_y = min(normalize(in.world_pos - u.camera_pos.xyz).y, -1e-4);
+    let extinction = 0.001;
+    let murky_factor = exp(-normalize(u.camera_pos.xyz).y * extinction)
+        * (1.0 - exp(-(in.world_pos.y + 40.0) * c2p_y * extinction))
+        / (-c2p_y * extinction);
+    let murkiness = clamp(0.007 * murky_factor, 0.0, 1.0);
+    let water_deep = clamp(0.003 * murky_factor, 0.0, 1.0);
+    final_color = mix(
+        final_color,
+        vec3<f32>(0.315, 0.425, 0.475) * (1.0 - water_deep),
+        murkiness,
+    );
+
+    final_color *= lm_value;
 
     if u.brush_highlight.w > 0.5 {
         let brush_center = u.brush_highlight.xy;

@@ -166,8 +166,8 @@ pub fn show_viewport(ui: &mut Ui, app: &mut EditorApp) {
                         }
                     }
 
-                    // Separate flag so non-water brush strokes skip the 500 KB
-                    // double-clone inside `build_water_vertex_depths`.
+                    // Separate flag so non-water brush strokes skip the
+                    // riverbed regeneration inside the water mesh rebuild.
                     if app.water_dirty {
                         let map = &doc.map.map_data;
                         if let Some(ref ttp) = doc.map.terrain_types {
@@ -187,8 +187,10 @@ pub fn show_viewport(ui: &mut Ui, app: &mut EditorApp) {
                     }
 
                     if app.lightmap_dirty {
-                        let lightmap =
-                            crate::viewport::lightmap::compute_lightmap(&doc.map.map_data);
+                        let lightmap = crate::viewport::lightmap::compute_lightmap(
+                            &doc.map.map_data,
+                            doc.map.terrain_types.as_ref(),
+                        );
                         resources.renderer.upload_lightmap(device, queue, &lightmap);
                         app.lightmap_dirty = false;
                     }

@@ -1,11 +1,16 @@
-// Water surface shader matching WZ2100 medium/high quality rendering.
-// Terrain is lowered at water tiles; water plane sits just above the basin
-// and shore tiles fade via depth-based alpha.
+// Water surface, ported from WZ2100 terrain_water_high.vert/.frag.
 //
-// Constants (from WZ2100 src/terrain.cpp + shaders):
-//   512.0  UV tile scale (1/4 * 1/128 of world coords)
-//   80.0   layer 1 X drift divisor
-//   40.0   Y drift divisor (opposite sign per layer)
+// The mesh is a sheet at terrain height minus 128/3 covering the whole map;
+// the depth buffer clips it under land, carving the shoreline. Per-vertex
+// depth is water level minus the dug riverbed height in world units.
+//
+// Two deviations from the game, both texture plumbing not carried for an
+// editor preview:
+// - The surface normal comes from the gradient of the two scrolling noise
+//   channels instead of four RNM-blended normal-map samples (tex_nm), so the
+//   sparkle is slightly softer but driven by the same wave pattern.
+// - The foam term drops the foam-texture product (tex_sm) and keeps the
+//   normal-derived component.
 
 struct Uniforms {
     mvp: mat4x4<f32>,
@@ -21,6 +26,8 @@ struct Uniforms {
 
 @group(0) @binding(0)
 var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var lightmap_texture: texture_2d<f32>;
+@group(0) @binding(2) var lightmap_sampler: sampler;
 
 // page-80-water-1.png and page-81-water-2.png. A 1x1 fallback is bound when
 // textures aren't loaded; we detect it via textureDimensions and switch to
@@ -40,6 +47,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
+    // 0 deep water, 0.5 at the shoreline, per terrain_water_high.vert.
     @location(1) depth: f32,
 };
 
@@ -48,7 +56,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = uniforms.mvp * vec4<f32>(in.position, 1.0);
     out.world_pos = in.position;
-    out.depth = in.depth;
+    out.depth = 1.0 - (clamp(in.depth / 96.0, -1.0, 1.0) * 0.5 + 0.5);
     return out;
 }
 
@@ -127,13 +135,15 @@ fn noise2_grad(p: vec2<f32>) -> vec2<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let time = uniforms.fog_params.z;
 
+    // terrain_water_high.vert: uv1 = (x/3/128, -z/3/128 + t/45),
+    // uv2 = (x/4/128, -z/4/128 - t/60).
     let uv1 = vec2<f32>(
-        in.world_pos.x / 512.0 + time / 80.0,
-        -in.world_pos.z / 512.0 + time / 40.0,
+        in.world_pos.x / 384.0,
+        -in.world_pos.z / 384.0 + time / 45.0,
     );
     let uv2 = vec2<f32>(
         in.world_pos.x / 512.0,
-        -in.world_pos.z / 512.0 - time / 40.0,
+        -in.world_pos.z / 512.0 - time / 60.0,
     );
 
     let tex_dims = textureDimensions(water_tex1);
@@ -148,7 +158,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         tex_val2 = textureSample(water_tex2, water_sampler, uv2).r;
     } else {
         // Frequencies 13.7 / 11.3 are non-integer so they don't align with the
-        // 128-unit tile grid (UV 0.25). Octave offsets prevent inter-octave correlation.
+        // 128-unit tile grid. Octave offsets prevent inter-octave correlation.
         let p1 = uv1 * 13.7;
         let p2 = uv2 * 11.3;
         tex_val1 = noise(p1) * 0.65 + noise(p1 * 2.17 + vec2<f32>(5.3, 7.1)) * 0.35;
@@ -189,44 +199,49 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // higher Y = flatter, only near-perfect reflections become visible sparkles.
     let N = normalize(vec3<f32>(nx, 30.0, nz));
 
-    let water_base = vec3<f32>(0.18, 0.33, 0.42);
-    var water_color = water_base + vec3<f32>(wave * wave * 0.04);
-
-    let sun_dir = normalize(uniforms.sun_direction.xyz);
+    let L = normalize(uniforms.sun_direction.xyz);
     let eye_dir = normalize(uniforms.camera_pos.xyz - in.world_pos);
-    let half_vec = normalize(sun_dir + eye_dir);
+    let H = normalize(L + eye_dir);
 
-    // 0.45 ambient + 0.55 diffuse Lambert.
-    let diffuse = max(dot(N, sun_dir), 0.0) * 0.55 + 0.45;
-    water_color *= diffuse;
+    // terrain_water_high.frag main_bumpMapping, minus shadow-map visibility
+    // (this pass carries no shadow bind group).
+    let water_color = vec3<f32>(0.18, 0.33, 0.42);
+    let diffuse_factor = max(dot(N, L), 0.0);
 
-    let n_dot_h = max(dot(N, half_vec), 0.0);
-    let spec = pow(n_dot_h, 128.0);
+    let d = mix(in.depth * 0.1, in.depth, 0.5);
+    let foam = clamp(pow(length(N.xz), 2.5) * 1000.0 * d * d, 0.0, 0.2);
 
-    let reflect_dir = reflect(-sun_dir, N);
-    let r_dot_h = max(dot(reflect_dir, half_vec), 0.0);
-    let refl = pow(r_dot_h, 14.0);
+    let spec128 = clamp(pow(max(dot(N, H), 0.0), 128.0), 0.0, 1.0);
+    let reflect_light = reflect(-L, N);
+    let r = pow(max(dot(reflect_light, H), 0.0), 14.0);
+    let specular_factor = (spec128 + r) * 0.5;
 
-    let specular = spec * 0.25 + refl * 0.04;
-    water_color += vec3<f32>(1.0, 1.0, 1.0) * specular;
+    // piedraw.cpp lighting0: ambient 0.5, diffuse 1.0, specular 1.0.
+    let ambient = vec3<f32>(0.5) * foam;
+    let diffuse = diffuse_factor * water_color + vec3<f32>(wave * wave * 0.5);
+    let spec = vec3<f32>(specular_factor * diffuse_factor);
 
-    let eye_dot_up = max(dot(eye_dir, vec3<f32>(0.0, 1.0, 0.0)), 0.0);
-    let fresnel = pow(1.0 - eye_dot_up, 4.0) * 0.1;
-    water_color = mix(water_color, (water_color + vec3<f32>(1.0, 0.8, 0.63)) * 0.5, fresnel);
+    var color = ambient + diffuse + spec;
 
-    // Depth ranges: 0 (outer shore, 0 water neighbors), 21 (1 neighbor),
-    // 30 (2 neighbors), 42 (fully interior). smoothstep 0-25 fades across
-    // the 2-tile shore zone.
-    let shore_fade = smoothstep(0.0, 25.0, in.depth);
-    let alpha = shore_fade;
+    // Upstream leaves this mix factor unclamped; clamped here because at
+    // grazing angles pow(1-x,10)*1000 explodes and extrapolates the mix.
+    let fresnel = clamp(pow(1.0 - dot(eye_dir, H), 10.0) * 1000.0, 0.0, 1.0);
+    color = mix(color, (color + vec3<f32>(1.0, 0.8, 0.63)) * 0.5, fresnel);
+
+    // Tile brightness / ambient occlusion, flat like upstream (no pow curve).
+    let lm_uv = vec2<f32>(in.world_pos.x, in.world_pos.z) / uniforms.map_world_size.xy;
+    color *= textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
+
+    let fresnel_alpha = clamp(pow(1.0 - dot(eye_dir, vec3<f32>(0.0, 1.0, 0.0)), 0.8), 0.15, 0.5);
+    let alpha = (0.15 + 0.35 + fresnel_alpha) * (1.0 - in.depth);
 
     if uniforms.fog_color.a > 0.5 {
         let dist = distance(in.world_pos, uniforms.camera_pos.xyz);
         let fog_start = uniforms.fog_params.x;
         let fog_end = uniforms.fog_params.y;
         let fog_factor = clamp((fog_end - dist) / (fog_end - fog_start), 0.0, 1.0);
-        water_color = mix(uniforms.fog_color.rgb, water_color, fog_factor);
+        color = mix(uniforms.fog_color.rgb, color, fog_factor);
     }
 
-    return vec4<f32>(water_color, alpha);
+    return vec4<f32>(color, alpha);
 }

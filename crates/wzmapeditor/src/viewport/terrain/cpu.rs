@@ -59,9 +59,8 @@ impl TerrainMesh {
         let h = map.height;
         let tile_count = (w * h) as usize;
 
-        // Interior water vertices drop by the full offset; shore-adjacent
-        // ones drop by a fraction so basins slope naturally without
-        // distorting steep cliffs at the shoreline.
+        // Water tiles render dug down into their riverbed, exactly as the
+        // game digs them at load; the map data itself keeps the undug heights.
         let water_depth: Vec<f32> = if let Some(ttp) = terrain_types {
             build_water_vertex_depths(map, ttp)
         } else {

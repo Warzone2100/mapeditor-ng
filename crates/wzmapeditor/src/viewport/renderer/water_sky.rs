@@ -106,12 +106,11 @@ pub(super) fn build(
         target_format,
         PipelineRecipe::SKY,
     );
-    // Pull the water plane toward the camera so it wins the depth test
-    // against the lowered basin terrain. A flat plane has ~zero depth slope,
-    // so a slope-scaled bias is a near-no-op on a correct backend, but it is
-    // implementation-defined: some Win11/Vulkan drivers compute it so water
-    // loses the depth test and the basin shows through ("water not loading").
-    // A constant-only bias is portable and keeps water visible everywhere.
+    // Pull the water sheet toward the camera so it wins marginal depth ties
+    // along the shoreline, where the sheet passes through the terrain slope.
+    // A slope-scaled bias is implementation-defined (some Win11/Vulkan drivers
+    // compute it so water loses the depth test entirely); a constant-only
+    // bias is portable.
     let water_bias = wgpu::DepthBiasState {
         constant: -4,
         slope_scale: 0.0,

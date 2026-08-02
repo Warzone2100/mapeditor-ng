@@ -17,6 +17,10 @@ use crate::viewport::ground_types::GroundData;
 /// near-unused entries; the summary line still accounts for them.
 const MAX_ROWS: usize = 8;
 
+/// Bumped with every shading change. A cached wasm build is otherwise
+/// indistinguishable from the current one in a pasted report.
+const SHADING_REVISION: u32 = 2;
+
 /// One report line and whether it describes a problem.
 struct Line {
     warn: bool,
@@ -47,7 +51,10 @@ pub fn report(app: &mut EditorApp) {
 
 fn collect(app: &EditorApp) -> Vec<Line> {
     let mut lines = vec![
-        info("--- Renderer diagnostics ---".to_owned()),
+        info(format!(
+            "--- Renderer diagnostics (build {}, shading rev {SHADING_REVISION}) ---",
+            env!("CARGO_PKG_VERSION"),
+        )),
         info(format!(
             "Tileset {} - terrain quality {}",
             app.current_tileset.as_str(),
