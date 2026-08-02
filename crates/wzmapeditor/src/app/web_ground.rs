@@ -193,6 +193,34 @@ fn start_decode(app: &mut EditorApp, tileset: Tileset, cache: HashMap<String, Ve
     ));
 }
 
+/// Mean R, G and B of an RGBA layer, for the Renderer diagnostics.
+///
+/// Sampled on a stride because this runs on the browser's main thread and a
+/// 1024² layer is a megapixel; every 64th pixel is far more than enough to
+/// characterise a tiling ground texture. A specular layer's mean is the one
+/// number that says whether the shader's gloss input is near zero (a tight
+/// highlight) or near one, where the Blinn exponent collapses and the specular
+/// term turns into flat additive white.
+fn mean_rgb(rgba: &[u8]) -> [u8; 3] {
+    const STRIDE: usize = 64 * 4;
+    let mut sums = [0u64; 3];
+    let mut n = 0u64;
+    for px in rgba.chunks_exact(4).step_by(STRIDE / 4) {
+        sums[0] += u64::from(px[0]);
+        sums[1] += u64::from(px[1]);
+        sums[2] += u64::from(px[2]);
+        n += 1;
+    }
+    if n == 0 {
+        return [0, 0, 0];
+    }
+    [
+        (sums[0] / n) as u8,
+        (sums[1] / n) as u8,
+        (sums[2] / n) as u8,
+    ]
+}
+
 /// Build the decode state: pre-fill the arrays with their neutral defaults and
 /// enqueue one decode job per present layer.
 fn build(
@@ -369,13 +397,18 @@ pub(crate) fn poll(ctx: &egui::Context, app: &mut EditorApp) {
 
     let start = web_time::Instant::now();
     while let Some(job) = decode.jobs.pop() {
-        // The ground diffuse array is what the splatting samples, so each of its
-        // (at most 16) slots is reported either way; the normal, specular and
-        // decal arrays would swamp the panel, so only their failures are.
-        let report_success = matches!(job.target, Target::Diffuse);
+        // Every ground slot is reported either way: the diffuse array is what the
+        // splatting samples, and the normal and specular means say whether the
+        // shader's bump and gloss inputs are sane. The 78 decal tiles times three
+        // arrays would swamp the panel, so only their failures are.
+        let report_success = matches!(
+            job.target,
+            Target::Diffuse | Target::Normal | Target::Specular
+        );
         let slot = format!("{} [{}] {}", job.target.label(), job.layer, job.name);
 
         if let Some(rgba) = decode.cache.remove(&job.name) {
+            let mean = mean_rgb(&rgba);
             let buffer = decode.buffer_mut(job.target);
             let written = write_array_layer(buffer, job.offset, &rgba);
             if !written {
@@ -385,9 +418,10 @@ pub(crate) fn poll(ctx: &egui::Context, app: &mut EditorApp) {
                     job.offset
                 ));
             } else if report_success {
-                app.log_render(format!("{slot} restored from cache"));
+                app.log_render(format!("{slot} restored from cache, mean rgb {mean:?}"));
             }
         } else if let Some(rgba) = (job.load)() {
+            let mean = mean_rgb(&rgba);
             let written = {
                 let buffer = decode.buffer_mut(job.target);
                 write_array_layer(buffer, job.offset, &rgba)
@@ -399,7 +433,7 @@ pub(crate) fn poll(ctx: &egui::Context, app: &mut EditorApp) {
                     job.offset
                 ));
             } else if report_success {
-                app.log_render(format!("{slot} decoded"));
+                app.log_render(format!("{slot} decoded, mean rgb {mean:?}"));
             }
             // Persist the freshly decoded layer so later sessions skip the
             // transcode. Fire-and-forget, best-effort.
