@@ -90,11 +90,15 @@ fn sample_ground(ground_no: u32, world_xz: vec2<f32>) -> vec3<f32> {
     let scale = get_ground_scale(ground_no);
     // WZ2100 ground UV is (-vertex.z, vertex.x); world_xz=(x,z) maps to (-z, x)/scale.
     let uv = vec2<f32>(-world_xz.y, world_xz.x) / (scale * 128.0);
-    return textureSample(ground_texture, ground_sampler, uv, ground_no).rgb;
+    return textureSampleBias(ground_texture, ground_sampler, uv, ground_no, MIP_LOAD_BIAS).rgb;
 }
 
 // Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
 const MIN_SHADOW_VISIBILITY: f32 = 0.5;
+
+// WZ2100 patches WZ_MIP_LOAD_BIAS into every texture lookup except the
+// lightmap; the default "High" LOD distance setting makes it -0.5.
+const MIP_LOAD_BIAS: f32 = -0.5;
 
 // WZ2100 piedraw.cpp LIGHT_AMBIENT, scaled by the 0.2 weight below so the term
 // reads as upstream writes it.
@@ -150,7 +154,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // WebGPU forbids implicit-LOD sampling in non-uniform control flow, and
     // tile_no is a per-fragment (flat) varying. The layer index is always valid.
     let layer = i32(min(in.tile_index, textureNumLayers(atlas_texture) - 1u));
-    let decal = textureSample(atlas_texture, atlas_sampler, in.tex_coord, layer);
+    let decal = textureSampleBias(atlas_texture, atlas_sampler, in.tex_coord, layer, MIP_LOAD_BIAS);
 
     var base_color = ground_color;
     if in.tile_no >= 0 {

@@ -67,6 +67,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 // Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
 const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 
+// WZ2100 patches WZ_MIP_LOAD_BIAS into every texture lookup except the
+// lightmap; the default "High" LOD distance setting makes it -0.5.
+const MIP_LOAD_BIAS: f32 = -0.5;
+
 // WZ2100 piedraw.cpp LIGHT_AMBIENT. The shaders scale this rather than using a
 // bare literal, so the 0.25/0.2 weights below read as upstream writes them.
 const AMBIENT: f32 = 0.5;
@@ -122,7 +126,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Each tile is its own array layer with an independent mip chain, so
         // ClampToEdge trilinear sampling never bleeds a neighbouring tile.
         let layer = i32(min(in.tile_index, textureNumLayers(atlas_texture) - 1u));
-        base_color = textureSample(atlas_texture, atlas_sampler, in.tex_coord, layer).rgb;
+        base_color = textureSampleBias(atlas_texture, atlas_sampler, in.tex_coord, layer, MIP_LOAD_BIAS).rgb;
     } else {
         // Height-based Arizona desert palette fallback.
         let h = in.height_color;

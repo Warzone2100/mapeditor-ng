@@ -117,6 +117,10 @@ fn vs_main(in: VertexIn) -> VertexOut {
 // Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
 const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 
+// WZ2100 patches WZ_MIP_LOAD_BIAS into every texture lookup except the
+// lightmap; the default "High" LOD distance setting makes it -0.5.
+const MIP_LOAD_BIAS: f32 = -0.5;
+
 fn sample_shadow(shadow_pos: vec4<f32>, n_dot_l: f32) -> f32 {
     let proj = shadow_pos.xyz / shadow_pos.w;
     let uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
@@ -150,12 +154,12 @@ fn ground_uv(ground_no: u32, world_xz: vec2<f32>) -> vec2<f32> {
 
 fn sample_ground_color(ground_no: u32, world_xz: vec2<f32>) -> vec3<f32> {
     let uv = ground_uv(ground_no, world_xz);
-    return textureSample(ground_texture, ground_sampler, uv, ground_no).rgb;
+    return textureSampleBias(ground_texture, ground_sampler, uv, ground_no, MIP_LOAD_BIAS).rgb;
 }
 
 fn sample_ground_normal(ground_no: u32, world_xz: vec2<f32>) -> vec3<f32> {
     let uv = ground_uv(ground_no, world_xz);
-    let n = textureSample(normal_texture, ground_sampler, uv, ground_no).rgb;
+    let n = textureSampleBias(normal_texture, ground_sampler, uv, ground_no, MIP_LOAD_BIAS).rgb;
     // Decode 0..1 to -1..1; black sample falls back to flat up.
     let decoded = normalize(n * 2.0 - 1.0);
     let is_zero = step(dot(n, n), 0.001);
@@ -164,7 +168,7 @@ fn sample_ground_normal(ground_no: u32, world_xz: vec2<f32>) -> vec3<f32> {
 
 fn sample_ground_specular(ground_no: u32, world_xz: vec2<f32>) -> f32 {
     let uv = ground_uv(ground_no, world_xz);
-    return textureSample(specular_texture, ground_sampler, uv, ground_no).r;
+    return textureSampleBias(specular_texture, ground_sampler, uv, ground_no, MIP_LOAD_BIAS).r;
 }
 
 @fragment
@@ -199,9 +203,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let has_decal = in.tile_no >= 0;
     let decal_idx = max(in.tile_no, 0);
     let uv = in.tex_coord;
-    let decal_color = textureSample(decal_texture, decal_sampler, uv, decal_idx);
-    let dn_raw = textureSample(decal_normal_texture, decal_sampler, uv, decal_idx).rgb;
-    let decal_spec = textureSample(decal_specular_texture, decal_sampler, uv, decal_idx).r;
+    let decal_color = textureSampleBias(decal_texture, decal_sampler, uv, decal_idx, MIP_LOAD_BIAS);
+    let dn_raw = textureSampleBias(decal_normal_texture, decal_sampler, uv, decal_idx, MIP_LOAD_BIAS).rgb;
+    let decal_spec = textureSampleBias(decal_specular_texture, decal_sampler, uv, decal_idx, MIP_LOAD_BIAS).r;
     if has_decal {
         let a = decal_color.a;
         color = mix(color, decal_color.rgb, a);

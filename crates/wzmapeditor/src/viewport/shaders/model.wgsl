@@ -94,6 +94,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 const ALPHA_CUTOFF: f32 = 0.1;
 
+// WZ2100 patches WZ_MIP_LOAD_BIAS into every texture lookup except the
+// lightmap; the default "High" LOD distance setting makes it -0.5.
+const MIP_LOAD_BIAS: f32 = -0.5;
+
 const GAUSSIAN_SHININESS: f32 = 0.33;   // WZ2100 tcmask_instanced.frag shininess
 const AMBIENT: f32 = 0.5;               // WZ2100 piedraw.cpp LIGHT_AMBIENT
 
@@ -144,7 +148,7 @@ fn compute_shadow(world_pos: vec3<f32>, n_dot_l: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(model_atlas, model_sampler, in.tex_coord, 0);
+    let tex_color = textureSampleBias(model_atlas, model_sampler, in.tex_coord, 0, MIP_LOAD_BIAS);
 
     if tex_color.a < ALPHA_CUTOFF {
         discard;
@@ -157,8 +161,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Filler maps for missing normal/specular are uploaded with alpha=0;
     // real maps have alpha=1, so .a is a presence flag.
-    let normal_sample = textureSample(model_atlas, model_sampler, in.tex_coord, 2);
-    let specular_sample = textureSample(model_atlas, model_sampler, in.tex_coord, 3);
+    let normal_sample = textureSampleBias(model_atlas, model_sampler, in.tex_coord, 2, MIP_LOAD_BIAS);
+    let specular_sample = textureSampleBias(model_atlas, model_sampler, in.tex_coord, 3, MIP_LOAD_BIAS);
     let has_normalmap = normal_sample.a > 0.5;
     let has_specularmap = specular_sample.a > 0.5;
 
@@ -220,7 +224,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Grain merge per tcmask_instanced.frag. This is the upstream blend and
     // behaves now that shading is gamma-space, where mask and diffuse share
     // a transfer curve.
-    let mask_alpha = textureSample(model_atlas, model_sampler, in.tex_coord, 1).r;
+    let mask_alpha = textureSampleBias(model_atlas, model_sampler, in.tex_coord, 1, MIP_LOAD_BIAS).r;
     var lit_color = light + specular_contrib + (in.team_color.rgb - 0.5) * mask_alpha;
 
     if uniforms.fog_color.a > 0.5 {

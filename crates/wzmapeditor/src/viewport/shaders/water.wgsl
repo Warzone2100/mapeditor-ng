@@ -71,6 +71,10 @@ fn hash2(p: vec2<f32>) -> f32 {
     return fract(sin(h) * 28637.1257);
 }
 
+// WZ2100 patches WZ_MIP_LOAD_BIAS into every texture lookup except the
+// lightmap; the default "High" LOD distance setting makes it -0.5.
+const MIP_LOAD_BIAS: f32 = -0.5;
+
 fn noise(p: vec2<f32>) -> f32 {
     let i = floor(p);
     let f = fract(p);
@@ -155,8 +159,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var tex_val1: f32;
     var tex_val2: f32;
     if has_texture {
-        tex_val1 = textureSample(water_tex1, water_sampler, uv1).r;
-        tex_val2 = textureSample(water_tex2, water_sampler, uv2).r;
+        tex_val1 = textureSampleBias(water_tex1, water_sampler, uv1, MIP_LOAD_BIAS).r;
+        tex_val2 = textureSampleBias(water_tex2, water_sampler, uv2, MIP_LOAD_BIAS).r;
     } else {
         // Frequencies 13.7 / 11.3 are non-integer so they don't align with the
         // 128-unit tile grid. Octave offsets prevent inter-octave correlation.
@@ -174,14 +178,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var nz: f32;
     if has_texture {
         let eps = 0.02;
-        let s_xp = textureSample(water_tex1, water_sampler, uv1 + vec2<f32>(eps, 0.0)).r
-                  * textureSample(water_tex2, water_sampler, uv2 + vec2<f32>(eps, 0.0)).r;
-        let s_xn = textureSample(water_tex1, water_sampler, uv1 - vec2<f32>(eps, 0.0)).r
-                  * textureSample(water_tex2, water_sampler, uv2 - vec2<f32>(eps, 0.0)).r;
-        let s_zp = textureSample(water_tex1, water_sampler, uv1 + vec2<f32>(0.0, eps)).r
-                  * textureSample(water_tex2, water_sampler, uv2 + vec2<f32>(0.0, eps)).r;
-        let s_zn = textureSample(water_tex1, water_sampler, uv1 - vec2<f32>(0.0, eps)).r
-                  * textureSample(water_tex2, water_sampler, uv2 - vec2<f32>(0.0, eps)).r;
+        let s_xp = textureSampleBias(water_tex1, water_sampler, uv1 + vec2<f32>(eps, 0.0), MIP_LOAD_BIAS).r
+                  * textureSampleBias(water_tex2, water_sampler, uv2 + vec2<f32>(eps, 0.0), MIP_LOAD_BIAS).r;
+        let s_xn = textureSampleBias(water_tex1, water_sampler, uv1 - vec2<f32>(eps, 0.0), MIP_LOAD_BIAS).r
+                  * textureSampleBias(water_tex2, water_sampler, uv2 - vec2<f32>(eps, 0.0), MIP_LOAD_BIAS).r;
+        let s_zp = textureSampleBias(water_tex1, water_sampler, uv1 + vec2<f32>(0.0, eps), MIP_LOAD_BIAS).r
+                  * textureSampleBias(water_tex2, water_sampler, uv2 + vec2<f32>(0.0, eps), MIP_LOAD_BIAS).r;
+        let s_zn = textureSampleBias(water_tex1, water_sampler, uv1 - vec2<f32>(0.0, eps), MIP_LOAD_BIAS).r
+                  * textureSampleBias(water_tex2, water_sampler, uv2 - vec2<f32>(0.0, eps), MIP_LOAD_BIAS).r;
         nx = s_xp - s_xn;
         nz = s_zp - s_zn;
     } else {
