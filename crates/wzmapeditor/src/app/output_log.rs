@@ -41,6 +41,16 @@ impl LogSeverity {
     }
 }
 
+/// `log` target that mirrors a record into [`LogSource::Render`] at any level.
+///
+/// Native ground-texture loading runs on a background thread with no access to
+/// `EditorApp`, so it reports through the `log` crate rather than
+/// `EditorApp::log_render`. Web has neither that thread nor a panel-forwarding
+/// logger -- `eframe::WebLogger` only reaches the browser console -- so the
+/// browser reports through `EditorApp` directly and never uses this.
+#[cfg(not(target_arch = "wasm32"))]
+pub const RENDER_TARGET: &str = "wzmapeditor::render";
+
 /// Logical origin of a log entry, used for source-based filtering.
 ///
 /// `Internal` covers warnings and errors captured automatically from the internal
@@ -54,16 +64,18 @@ pub enum LogSource {
     Tool,
     Generator,
     TestGame,
+    Render,
     Internal,
 }
 
 impl LogSource {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Editor,
         Self::MapIo,
         Self::Tool,
         Self::Generator,
         Self::TestGame,
+        Self::Render,
         Self::Internal,
     ];
 
@@ -74,6 +86,7 @@ impl LogSource {
             Self::Tool => "tool",
             Self::Generator => "gen",
             Self::TestGame => "test",
+            Self::Render => "render",
             Self::Internal => "internal",
         }
     }
@@ -85,9 +98,20 @@ impl LogSource {
             Self::Tool => "Tools",
             Self::Generator => "Generator",
             Self::TestGame => "Test Game",
+            Self::Render => "Renderer",
             Self::Internal => "Internal crates",
         }
     }
+}
+
+/// A toolbar request the panel cannot service on its own.
+///
+/// Rendering the panel borrows only the log, while the renderer report reads
+/// live tileset, map and ground-texture state, so the caller performs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputAction {
+    None,
+    ReportRenderState,
 }
 
 /// A single structured log entry rendered in the Output panel.
@@ -124,11 +148,14 @@ pub struct OutputLogFilter {
 
 impl Default for OutputLogFilter {
     fn default() -> Self {
-        // Internal crates (captured log-crate output) is off by default:
-        // the noise drowns out editor messages, and it's easy to turn
-        // back on from the source-filter dropdown when debugging.
+        // Internal crates (captured log-crate output) and Renderer are off by
+        // default: the noise drowns out editor messages, and both are easy to
+        // turn back on from the source-filter dropdown when debugging. Hiding
+        // rather than suppressing matters for Renderer, whose entries are
+        // written while terrain loads -- long before anyone thinks to look.
         let mut sources = [true; LogSource::ALL.len()];
         sources[source_index(LogSource::Internal)] = false;
+        sources[source_index(LogSource::Render)] = false;
         Self {
             show_info: true,
             show_warn: true,
@@ -175,7 +202,8 @@ fn source_index(s: LogSource) -> usize {
         LogSource::Tool => 2,
         LogSource::Generator => 3,
         LogSource::TestGame => 4,
-        LogSource::Internal => 5,
+        LogSource::Render => 5,
+        LogSource::Internal => 6,
     }
 }
 
@@ -234,16 +262,25 @@ impl OutputLog {
         self.entries.clear();
     }
 
-    /// Render the panel into `ui` (toolbar + scrollable entry list).
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        self.pump();
-
-        self.toolbar_ui(ui);
-        ui.separator();
-        self.entries_ui(ui);
+    /// Reveal `source` in the filter, so entries written under it are not
+    /// hidden by a checkbox the user never turned on.
+    pub fn show_source(&mut self, source: LogSource) {
+        self.filter.sources[source_index(source)] = true;
     }
 
-    fn toolbar_ui(&mut self, ui: &mut egui::Ui) {
+    /// Render the panel into `ui` (toolbar + scrollable entry list), returning
+    /// any action the caller must perform on the panel's behalf.
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> OutputAction {
+        self.pump();
+
+        let action = self.toolbar_ui(ui);
+        ui.separator();
+        self.entries_ui(ui);
+        action
+    }
+
+    fn toolbar_ui(&mut self, ui: &mut egui::Ui) -> OutputAction {
+        let mut action = OutputAction::None;
         ui.horizontal_wrapped(|ui| {
             severity_chip(ui, "Info", LogSeverity::Info, &mut self.filter.show_info);
             severity_chip(ui, "Warn", LogSeverity::Warn, &mut self.filter.show_warn);
@@ -283,6 +320,17 @@ impl OutputLog {
                 ui.checkbox(&mut self.filter.show_source_col, "Show source tag");
             });
 
+            if ui
+                .button("Renderer diagnostics")
+                .on_hover_text(
+                    "Report the active tileset, every ground texture and its array slot, \
+                     and which ground types the terrain picked",
+                )
+                .clicked()
+            {
+                action = OutputAction::ReportRenderState;
+            }
+
             if copy_clicked {
                 let text = self.visible_entries_as_text();
                 ui.ctx().copy_text(text);
@@ -291,6 +339,7 @@ impl OutputLog {
                 self.clear();
             }
         });
+        action
     }
 
     fn entries_ui(&mut self, ui: &mut egui::Ui) {
@@ -424,6 +473,22 @@ mod tests {
             .collect();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].severity, LogSeverity::Warn);
+    }
+
+    #[test]
+    fn render_entries_are_recorded_but_hidden_until_the_source_is_shown() {
+        let (mut log, _tx) = OutputLog::new();
+        log.push(LogEntry::new(
+            LogSeverity::Info,
+            LogSource::Render,
+            "ground diffuse [0] page-82.png".into(),
+        ));
+        let entry = log.entries.front().expect("entry was pushed").clone();
+        // Recorded regardless of the filter, so enabling the source later still
+        // surfaces entries written while the terrain was loading.
+        assert!(!log.filter.entry_visible(&entry));
+        log.show_source(LogSource::Render);
+        assert!(log.filter.entry_visible(&entry));
     }
 
     #[test]

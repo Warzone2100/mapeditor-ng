@@ -49,10 +49,18 @@ pub fn load_ground_texture_data(
             Some(rgba) => {
                 let offset = i * layer_bytes;
                 data[offset..offset + layer_bytes].copy_from_slice(&rgba);
-                log::info!("Loaded ground texture [{i}] {}", ground_types[i].filename);
+                log::info!(
+                    target: crate::app::output_log::RENDER_TARGET,
+                    "ground diffuse [{i}] {} loaded",
+                    ground_types[i].filename
+                );
             }
             None => {
-                log::warn!("Failed to load ground texture {}", ground_types[i].filename);
+                log::warn!(
+                    target: crate::app::output_log::RENDER_TARGET,
+                    "ground diffuse [{i}] {} missing; slot left at its gray fill",
+                    ground_types[i].filename
+                );
             }
         }
     }

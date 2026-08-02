@@ -8,6 +8,7 @@ mod dock_viewer;
 mod duplicate;
 pub(crate) mod map_io;
 pub mod output_log;
+mod render_diag;
 mod testing;
 mod tileset;
 mod types;
@@ -674,6 +675,25 @@ impl EditorApp {
         log::error!("{msg}");
         self.output_log
             .push(LogEntry::new(LogSeverity::Error, LogSource::Editor, msg));
+    }
+
+    /// Emit an Info entry under the Output panel's Renderer source.
+    ///
+    /// That source is hidden by default, so these are recorded for later rather
+    /// than shown as they happen. [`render_diag::report`] reveals it.
+    pub fn log_render(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::info!("{msg}");
+        self.output_log
+            .push(LogEntry::new(LogSeverity::Info, LogSource::Render, msg));
+    }
+
+    /// Emit a Warn entry under the Output panel's Renderer source.
+    pub fn log_render_warn(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::warn!("{msg}");
+        self.output_log
+            .push(LogEntry::new(LogSeverity::Warn, LogSource::Render, msg));
     }
 
     /// Report a failed user-initiated `.wz` load via the modal dialog and

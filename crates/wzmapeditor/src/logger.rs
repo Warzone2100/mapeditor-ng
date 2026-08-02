@@ -5,13 +5,15 @@
 //! `wgpu_*`/`naga` at Error, `RUST_LOG` respected). An extra sink forwards
 //! warnings and errors from the editor workspace crates (`wzmapeditor`,
 //! `wz_maplib`, `wz_pie`, `wz_stats`) into the Output panel so editor
-//! problems surface in-app while third-party noise stays on disk.
+//! problems surface in-app while third-party noise stays on disk. Records
+//! addressed to [`RENDER_TARGET`] are forwarded at every level, since those
+//! come from background threads that cannot reach `EditorApp` directly.
 
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 
-use crate::app::output_log::{LogEntry, LogSeverity, LogSource};
+use crate::app::output_log::{LogEntry, LogSeverity, LogSource, RENDER_TARGET};
 
 /// Crate prefixes whose warnings and errors are mirrored into the Output panel.
 ///
@@ -50,8 +52,8 @@ impl log::Log for EditorLogger {
     fn log(&self, record: &log::Record<'_>) {
         self.inner.log(record);
 
-        if let Some(severity) = classify_for_panel(record) {
-            let entry = LogEntry::new(severity, LogSource::Internal, record.args().to_string());
+        if let Some((severity, source)) = classify_for_panel(record) {
+            let entry = LogEntry::new(severity, source, record.args().to_string());
             if let Ok(tx) = self.panel_tx.lock() {
                 let _ = tx.send(entry);
             }
@@ -63,8 +65,19 @@ impl log::Log for EditorLogger {
     }
 }
 
-fn classify_for_panel(record: &log::Record<'_>) -> Option<LogSeverity> {
+fn classify_for_panel(record: &log::Record<'_>) -> Option<(LogSeverity, LogSource)> {
     let target = record.target();
+
+    // Checked before the prefix match below, which this target also satisfies.
+    if target == RENDER_TARGET {
+        let severity = match record.level() {
+            log::Level::Error => LogSeverity::Error,
+            log::Level::Warn => LogSeverity::Warn,
+            _ => LogSeverity::Info,
+        };
+        return Some((severity, LogSource::Render));
+    }
+
     let is_internal = EDITOR_CRATE_PREFIXES
         .iter()
         .any(|prefix| target == *prefix || target.starts_with(&format!("{prefix}::")));
@@ -72,8 +85,8 @@ fn classify_for_panel(record: &log::Record<'_>) -> Option<LogSeverity> {
         return None;
     }
     match record.level() {
-        log::Level::Error => Some(LogSeverity::Error),
-        log::Level::Warn => Some(LogSeverity::Warn),
+        log::Level::Error => Some((LogSeverity::Error, LogSource::Internal)),
+        log::Level::Warn => Some((LogSeverity::Warn, LogSource::Internal)),
         // Info from internal crates is not mirrored: curated Info entries
         // already reach the panel via `EditorApp::log()`.
         _ => None,
@@ -125,7 +138,10 @@ mod tests {
             .level(log::Level::Warn)
             .target("wz_maplib::validate")
             .build();
-        assert_eq!(classify_for_panel(&record), Some(LogSeverity::Warn));
+        assert_eq!(
+            classify_for_panel(&record),
+            Some((LogSeverity::Warn, LogSource::Internal))
+        );
     }
 
     #[test]
@@ -146,5 +162,18 @@ mod tests {
             .target("wgpu_core::device")
             .build();
         assert_eq!(classify_for_panel(&record), None);
+    }
+
+    #[test]
+    fn forwards_render_target_info_that_the_internal_rule_would_drop() {
+        let record = log::Record::builder()
+            .args(format_args!("ground diffuse [0] page-82.png"))
+            .level(log::Level::Info)
+            .target(RENDER_TARGET)
+            .build();
+        assert_eq!(
+            classify_for_panel(&record),
+            Some((LogSeverity::Info, LogSource::Render))
+        );
     }
 }

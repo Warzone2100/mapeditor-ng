@@ -44,6 +44,20 @@ enum Target {
     DecalSpecular,
 }
 
+impl Target {
+    /// Name used in the Output panel's Renderer entries.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Diffuse => "ground diffuse",
+            Self::Normal => "ground normal",
+            Self::Specular => "ground specular",
+            Self::DecalDiffuse => "decal diffuse",
+            Self::DecalNormal => "decal normal",
+            Self::DecalSpecular => "decal specular",
+        }
+    }
+}
+
 /// One layer to decode and where its RGBA bytes land in the target array.
 struct Job {
     /// Source texture filename; doubles as the per-layer cache key.
@@ -51,6 +65,8 @@ struct Job {
     load: Box<dyn FnOnce() -> Option<Vec<u8>>>,
     target: Target,
     offset: usize,
+    /// Array slot this layer occupies, reported in the Renderer diagnostics.
+    layer: usize,
 }
 
 /// In-flight HQ ground decode: pre-allocated arrays plus the remaining
@@ -159,10 +175,10 @@ fn start_decode(app: &mut EditorApp, tileset: Tileset, cache: HashMap<String, Ve
         return;
     };
     let Some(ground_data) = GroundData::load(assets.as_ref(), tileset.as_str()) else {
-        log::warn!(
+        app.log_render_warn(format!(
             "HQ decode: failed to load ground data for {}",
             tileset.as_str()
-        );
+        ));
         app.rt.web_hq_loaded_tileset = Some(tileset);
         return;
     };
@@ -214,6 +230,7 @@ fn build(
             }),
             target: Target::Diffuse,
             offset,
+            layer: i,
         });
         if let Some(nm) = gt.normal_filename.clone() {
             let assets_n = assets.clone();
@@ -230,6 +247,7 @@ fn build(
                 }),
                 target: Target::Normal,
                 offset,
+                layer: i,
             });
         }
         if let Some(sm) = gt.specular_filename.clone() {
@@ -247,6 +265,7 @@ fn build(
                 }),
                 target: Target::Specular,
                 offset,
+                layer: i,
             });
         }
     }
@@ -269,6 +288,7 @@ fn build(
             }),
             target: Target::DecalDiffuse,
             offset,
+            layer: i as usize,
         });
         let assets_n = assets.clone();
         let dir256_n = tileset_256_rel.clone();
@@ -285,6 +305,7 @@ fn build(
             }),
             target: Target::DecalNormal,
             offset,
+            layer: i as usize,
         });
         let assets_s = assets.clone();
         let dir256_s = tileset_256_rel.clone();
@@ -301,6 +322,7 @@ fn build(
             }),
             target: Target::DecalSpecular,
             offset,
+            layer: i as usize,
         });
     }
 
@@ -347,31 +369,47 @@ pub(crate) fn poll(ctx: &egui::Context, app: &mut EditorApp) {
 
     let start = web_time::Instant::now();
     while let Some(job) = decode.jobs.pop() {
+        // The ground diffuse array is what the splatting samples, so each of its
+        // (at most 16) slots is reported either way; the normal, specular and
+        // decal arrays would swamp the panel, so only their failures are.
+        let report_success = matches!(job.target, Target::Diffuse);
+        let slot = format!("{} [{}] {}", job.target.label(), job.layer, job.name);
+
         if let Some(rgba) = decode.cache.remove(&job.name) {
             let buffer = decode.buffer_mut(job.target);
-            if !write_array_layer(buffer, job.offset, &rgba) {
-                log::warn!(
-                    "HQ cache: layer {} of {} bytes overruns array at offset {}",
-                    job.name,
+            let written = write_array_layer(buffer, job.offset, &rgba);
+            if !written {
+                app.log_render_warn(format!(
+                    "{slot} from cache is {} bytes and overruns the array at offset {}",
                     rgba.len(),
                     job.offset
-                );
+                ));
+            } else if report_success {
+                app.log_render(format!("{slot} restored from cache"));
             }
         } else if let Some(rgba) = (job.load)() {
-            {
+            let written = {
                 let buffer = decode.buffer_mut(job.target);
-                if !write_array_layer(buffer, job.offset, &rgba) {
-                    log::warn!(
-                        "HQ decode: layer {} of {} bytes overruns array at offset {}",
-                        job.name,
-                        rgba.len(),
-                        job.offset
-                    );
-                }
+                write_array_layer(buffer, job.offset, &rgba)
+            };
+            if !written {
+                app.log_render_warn(format!(
+                    "{slot} decoded to {} bytes and overruns the array at offset {}",
+                    rgba.len(),
+                    job.offset
+                ));
+            } else if report_success {
+                app.log_render(format!("{slot} decoded"));
             }
             // Persist the freshly decoded layer so later sessions skip the
             // transcode. Fire-and-forget, best-effort.
             crate::app::web_ground_cache::save(decode.tileset, &job.name, rgba);
+        } else {
+            // Silently leaving the default fill in place is what makes a missing
+            // texture look like a shading bug, so say so.
+            app.log_render_warn(format!(
+                "{slot} did not load; slot left at its default fill"
+            ));
         }
         if decode.jobs.is_empty() || start.elapsed().as_millis() >= DECODE_BUDGET_MS {
             break;

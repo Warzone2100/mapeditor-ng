@@ -141,7 +141,9 @@ fn show_tab_body(ui: &mut egui::Ui, app: &mut EditorApp, tab: &mut DockTab) {
             ui::validation_panel::show_validation_panel(ui, app);
         }
         DockTab::OutputLog => {
-            app.output_log.ui(ui);
+            if app.output_log.ui(ui) == crate::app::output_log::OutputAction::ReportRenderState {
+                crate::app::render_diag::report(app);
+            }
         }
         DockTab::Balance => {
             ui::balance_panel::show_balance_panel(ui, app);
