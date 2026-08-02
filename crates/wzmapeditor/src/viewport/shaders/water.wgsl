@@ -1,8 +1,9 @@
 // Water surface, ported from WZ2100 terrain_water_high.vert/.frag.
 //
-// The mesh is a sheet at terrain height minus 128/3 covering the whole map;
-// the depth buffer clips it under land, carving the shoreline. Per-vertex
-// depth is water level minus the dug riverbed height in world units.
+// The mesh is a sheet at terrain height minus 128/3 covering the water
+// tiles; the depth buffer clips it where it dips below the shore slope,
+// carving the shoreline. Per-vertex depth is water level minus the dug
+// riverbed height in world units.
 //
 // Two deviations from the game, both texture plumbing not carried for an
 // editor preview:

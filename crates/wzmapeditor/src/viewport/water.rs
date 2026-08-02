@@ -2,8 +2,8 @@
 //!
 //! At load the game digs every interior water vertex hundreds of units down
 //! into a riverbed (`generateRiverbed`, `src/map.cpp`) and then draws a water
-//! sheet across the whole grid at `waterLevel = height - 128/3`; under land
-//! the sheet sits below the surface and the depth buffer clips it, which is
+//! sheet over the water tiles at `waterLevel = height - 128/3`; where the
+//! sheet passes below the shore slope the depth buffer clips it, which is
 //! what carves the shoreline. Both halves are mirrored here so the viewport
 //! shows what the game will show.
 
@@ -180,7 +180,12 @@ pub fn build_water_vertex_depths(map: &MapData, terrain_types: &TerrainTypeData)
 
 impl WaterMesh {
     /// Build the water sheet: one vertex per grid point at
-    /// `height - WATER_LEVEL_OFFSET`, quads over the whole map.
+    /// `height - WATER_LEVEL_OFFSET`, quads over water tiles only.
+    ///
+    /// The game gates water quads on `isWater()` per tile (`src/terrain.cpp`
+    /// index build); a sheet over land tiles would ride up cliff faces, where
+    /// its triangulation cuts through the terrain's. Each quad splits on the
+    /// same diagonal as the terrain quad below it.
     ///
     /// The per-vertex `depth` is water level minus the dug riverbed height,
     /// exactly WZ2100's `waterHeight - pos.y`; the shader maps it to shore
@@ -215,11 +220,18 @@ impl WaterMesh {
         let mut indices = Vec::with_capacity((w * h * 6) as usize);
         for ty in 0..h {
             for tx in 0..w {
+                if !is_water_tile(map, terrain_types, tx, ty) {
+                    continue;
+                }
                 let tl = ty * (w + 1) + tx;
                 let tr = tl + 1;
                 let bl = tl + w + 1;
                 let br = bl + 1;
-                indices.extend_from_slice(&[tl, tr, br, tl, br, bl]);
+                if map.tile(tx, ty).is_some_and(wz_maplib::MapTile::tri_flip) {
+                    indices.extend_from_slice(&[tl, tr, bl, tr, br, bl]);
+                } else {
+                    indices.extend_from_slice(&[tl, tr, br, tl, br, bl]);
+                }
             }
         }
 
@@ -333,12 +345,13 @@ mod tests {
     }
 
     #[test]
-    fn water_sheet_covers_grid_below_terrain() {
+    fn water_sheet_covers_only_water_tiles() {
         let (map, ttp) = make_test_map();
         let mesh = WaterMesh::from_map(&map, &ttp);
 
         assert_eq!(mesh.vertices.len(), 5 * 5);
-        assert_eq!(mesh.indices.len(), 4 * 4 * 6);
+        // Two water tiles, one quad each; land tiles get no sheet.
+        assert_eq!(mesh.indices.len(), 2 * 6);
         for v in &mesh.vertices {
             assert!(
                 (v.position[1] - (100.0 - WATER_LEVEL_OFFSET)).abs() < 0.001,
@@ -346,6 +359,11 @@ mod tests {
                 v.position[1]
             );
         }
+
+        // Both quads reference only the corners of tiles (1,1) and (2,1).
+        let quad_corners: std::collections::HashSet<u32> = mesh.indices.iter().copied().collect();
+        let expected: std::collections::HashSet<u32> = [6, 7, 8, 11, 12, 13].into_iter().collect();
+        assert_eq!(quad_corners, expected);
     }
 
     #[test]
