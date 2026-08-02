@@ -174,8 +174,8 @@ pub fn load_decal_texture_data_from_wz<R: std::io::Read + std::io::Seek>(
 
         // Priority 1: HQ 256px KTX2 tiles from high.wz (extracted to hw-256 dir).
         // high.wz KTX2 tiles are encoded in linear color space (unlike base.wz
-        // ground KTX2 which is sRGB). Convert to sRGB so the Rgba8UnormSrgb GPU
-        // decode produces correct colors.
+        // ground KTX2 which is sRGB). Encode to sRGB so every diffuse tile
+        // reaches the shader on the same curve.
         let rgba_opt = assets
             .bytes(&tileset_256_rel.join(&ktx2_filename))
             .and_then(|bytes| match load_ktx2_as_rgba_bytes(&bytes) {
@@ -231,11 +231,11 @@ pub fn load_decal_texture_data_from_wz<R: std::io::Read + std::io::Seek>(
 
 /// Convert an RGBA image from linear to sRGB color space (RGB channels only).
 ///
-/// high.wz KTX2 decal tiles are encoded in linear space. Since the GPU
-/// texture uses `Rgba8UnormSrgb` (hardware applies sRGB-to-linear on
-/// sample), we encode to sRGB here so the round-trip preserves the
-/// original linear values. Note: base.wz ground KTX2 textures are already
-/// sRGB and do NOT need this conversion.
+/// high.wz KTX2 decal tiles are encoded in linear space, while every other
+/// diffuse source ships sRGB-encoded bytes. The shaders light sRGB bytes
+/// directly, so linear sources are encoded here to put them on the same
+/// curve. Note: base.wz ground KTX2 textures are already sRGB and do NOT
+/// need this conversion.
 pub fn linear_to_srgb(img: &mut image::RgbaImage) {
     for pixel in img.pixels_mut() {
         for c in 0..3 {
@@ -414,8 +414,8 @@ pub(crate) fn load_ground_texture(
     // Try KTX2 first - high.wz ships HQ BasisU+Zstd compressed textures
     // that are higher quality than the base.wz PNGs.
     // high.wz KTX2 textures are encoded in linear color space. Diffuse
-    // textures need `linear_to_srgb` before uploading as Rgba8UnormSrgb.
-    // Normal/specular maps (_nm/_sm) stay linear (uploaded as Rgba8Unorm).
+    // textures need `linear_to_srgb` to match the other diffuse sources;
+    // normal/specular maps (_nm/_sm) carry no curve and stay linear.
     let ktx2_name = filename.replace(".png", ".ktx2");
     let ktx2_rel = dir_rel.join(&ktx2_name);
     let is_diffuse = !filename.contains("_nm") && !filename.contains("_sm");
@@ -470,7 +470,7 @@ pub(crate) fn load_ground_texture(
 /// `base.wz` archive step (the web VFS overlays high.wz onto the base tree and
 /// has no separate pre-overlay archive): HQ 256px KTX2, then HQ 256px PNG, then
 /// the extracted 128px PNG. high.wz KTX2 tiles are linear, so the diffuse path
-/// converts to sRGB for the `Rgba8UnormSrgb` upload.
+/// encodes them to sRGB to match the other sources.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn load_decal_tile(
     assets: &dyn crate::assets::AssetSource,

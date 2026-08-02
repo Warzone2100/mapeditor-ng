@@ -12,10 +12,11 @@ pub const THUMB_SIZE: u32 = 256;
 /// blowing up preload memory; the asset browser still uses [`THUMB_SIZE`].
 pub const PREVIEW_THUMB_SIZE: u32 = 512;
 
-/// `egui_wgpu::Renderer::register_native_texture` requires `Rgba8UnormSrgb`,
-/// so the designer can sample the preview target directly without a
-/// GPU-to-CPU-to-GPU round-trip.
-pub const THUMB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// egui composites into a non-sRGB surface, so its shader writes sampled
+/// texels through unchanged. A preview registered via
+/// `register_native_texture` must therefore already hold gamma-encoded
+/// bytes, matching what the model shader writes.
+pub const THUMB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// A model to include in a GPU thumbnail render.
 pub struct ThumbnailEntry<'a> {

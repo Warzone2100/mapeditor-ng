@@ -26,8 +26,8 @@ var lightmap_sampler: sampler;
 var model_sampler: sampler;
 
 // 4-layer array: 0=diffuse, 1=tcmask, 2=normal, 3=specular.
-// Stored Rgba8Unorm (linear) so the diffuse layer is gamma-decoded in shader;
-// bilinear single-mip means the delta vs hardware sRGB filtering is below noise.
+// Stored Rgba8Unorm and shaded as-is: WZ2100 lights gamma-encoded texels and
+// writes gamma-encoded output, so no transfer curve is applied anywhere here.
 @group(1) @binding(0)
 var model_atlas: texture_2d_array<f32>;
 
@@ -91,29 +91,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 const ALPHA_CUTOFF: f32 = 0.1;
 
-// Classic model lighting per WZ2100:
-//  diffuse directional is disabled (piedraw.cpp:93 "players dislike it"),
-//  light = ambient * diffuseMap * 2.0 with ambient = 0.5, then
-//  pal_SetBrightness(200) ~ 0.78 brings stock brick to in-game intensity.
-const BUILDING_BRIGHTNESS: f32 = 0.78;
-const GAUSSIAN_SHININESS: f32 = 0.33;   // WZ2100 tcmask.frag line 104
-const AMBIENT: f32 = 0.5;               // WZ2100 pie_InitLighting LIGHT_AMBIENT
+const GAUSSIAN_SHININESS: f32 = 0.33;   // WZ2100 tcmask_instanced.frag shininess
+const AMBIENT: f32 = 0.5;               // WZ2100 piedraw.cpp LIGHT_AMBIENT
 
-// Diffuse is sRGB-encoded inside Rgba8Unorm (the array forces one format
-// across all four maps), so hardware sRGB decode is bypassed.
-fn srgb_channel_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(
-        srgb_channel_to_linear(c.x),
-        srgb_channel_to_linear(c.y),
-        srgb_channel_to_linear(c.z),
-    );
-}
+// Floor on shadow visibility, per WZ2100 shadow_mapping.glsl. The classic
+// branch has no term that the shadow does not scale, so leaving visibility
+// unclamped would take every self-shadowed facet to black.
+const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 
 // 3x3 PCF shadow with depth bias.
 fn compute_shadow(world_pos: vec3<f32>) -> f32 {
@@ -145,13 +129,13 @@ fn compute_shadow(world_pos: vec3<f32>) -> f32 {
             );
         }
     }
-    return select(1.0, visibility / 9.0, in_bounds);
+    let pcf = mix(MIN_SHADOW_VISIBILITY, 1.0, visibility / 9.0);
+    return select(1.0, pcf, in_bounds);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let raw_diffuse = textureSample(model_atlas, model_sampler, in.tex_coord, 0);
-    let tex_color = vec4<f32>(srgb_to_linear(raw_diffuse.rgb), raw_diffuse.a);
+    let tex_color = textureSample(model_atlas, model_sampler, in.tex_coord, 0);
 
     if tex_color.a < ALPHA_CUTOFF {
         discard;
@@ -188,25 +172,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var light: vec3<f32>;
     var specular_contrib = vec3<f32>(0.0);
 
-    // Classic path multiplies raw PCF into ambient so self-shadowed facets
-    // darken; HQ path folds visibility into its diffuse term instead.
+    // Classic scales its single light term by visibility; HQ folds visibility
+    // into the diffuse term and leaves ambient unshadowed.
     let shadow = compute_shadow(in.world_pos);
 
-    // tcmask_instanced.frag adds the terrain lightmap to ambient so structures
-    // inherit ground sun. map_world_size.x == 1.0 is the thumbnail sentinel (no
-    // lightmap). Sampled before the non-uniform has_specularmap branch because
-    // WebGPU forbids implicit-LOD sampling in non-uniform control flow.
-    var ambient_factor = AMBIENT;
+    // The lightmap stores sun_diffuse * ambient_occlusion per tile, so it
+    // scales the light rather than adding to it, letting structures inherit
+    // ground sun without ever exceeding their albedo. tcmask_instanced.frag
+    // adds lightmap *rgb* instead, but that channel is point-light colour and
+    // is zero in an ordinary scene; it never reads alpha for models.
+    // map_world_size.x == 1.0 is the thumbnail sentinel (no lightmap). Sampled
+    // before the non-uniform has_specularmap branch because WebGPU forbids
+    // implicit-LOD sampling in non-uniform control flow.
+    var tile_brightness = 1.0;
     if uniforms.map_world_size.x > 1.0 {
         let lm_uv = in.world_pos.xz / uniforms.map_world_size.xy;
-        let lm_value = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
-        ambient_factor = min(AMBIENT + lm_value / 3.0, 1.0);
+        tile_brightness = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
     }
 
     if has_specularmap {
         let lambertTerm = max(dot(N, sun_dir), 0.0);
 
-        let ambient_light = vec3<f32>(ambient_factor) * tex_color.rgb;
+        let ambient_light = vec3<f32>(AMBIENT * tile_brightness) * tex_color.rgb;
         let diffuse_light = tex_color.rgb * lambertTerm * shadow;
         light = ambient_light + diffuse_light;
 
@@ -222,19 +209,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             specular_contrib = vec3<f32>(spec_value * gaussianTerm * lambertTerm);
         }
     } else {
-        // tcmask_instanced.frag classic: light = sceneColor + ambient*2*visibility.
-        // Raw shadow drops self-shadowed facets to sceneColor, giving the
-        // in-game 3D look on octagonal bases. Lightmap/3 keeps well-lit tiles
-        // at AMBIENT + 1/3 rather than saturating.
-        let scene_color = tex_color.rgb * 0.15;
-        light = scene_color + tex_color.rgb * (ambient_factor * 2.0) * shadow;
+        // tcmask_instanced.frag classic: emissive is zero and ambient is
+        // doubled, so albedo scaled by visibility is the entire light term.
+        light = tex_color.rgb * (AMBIENT * 2.0) * tile_brightness * shadow;
     }
 
-    // Lerp toward team color where mask is set; grain-merge muddies dark diffuses.
+    // Grain merge per tcmask_instanced.frag. This is the upstream blend and
+    // behaves now that shading is gamma-space, where mask and diffuse share
+    // a transfer curve.
     let mask_alpha = textureSample(model_atlas, model_sampler, in.tex_coord, 1).r;
-    let colored = mix(light + specular_contrib, in.team_color.rgb, mask_alpha);
-
-    var lit_color = colored * BUILDING_BRIGHTNESS;
+    var lit_color = light + specular_contrib + (in.team_color.rgb - 0.5) * mask_alpha;
 
     if uniforms.fog_color.a > 0.5 {
         let dist = distance(in.world_pos, uniforms.camera_pos.xyz);

@@ -64,6 +64,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+// Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
+const MIN_SHADOW_VISIBILITY: f32 = 0.5;
+
 // 3x3 PCF shadow with depth bias.
 fn compute_shadow(world_pos: vec3<f32>) -> f32 {
     let shadow_pos = uniforms.shadow_mvp * vec4<f32>(world_pos, 1.0);
@@ -94,7 +97,8 @@ fn compute_shadow(world_pos: vec3<f32>) -> f32 {
             );
         }
     }
-    return select(1.0, visibility / 9.0, in_bounds);
+    let pcf = mix(MIN_SHADOW_VISIBILITY, 1.0, visibility / 9.0);
+    return select(1.0, pcf, in_bounds);
 }
 
 @fragment
@@ -109,8 +113,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Each tile is its own array layer with an independent mip chain, so
         // ClampToEdge trilinear sampling never bleeds a neighbouring tile.
         let layer = i32(min(in.tile_index, textureNumLayers(atlas_texture) - 1u));
-        // Classic atlas tiles are pre-composited darker than Medium/High ground textures.
-        base_color = textureSample(atlas_texture, atlas_sampler, in.tex_coord, layer).rgb * 1.35;
+        base_color = textureSample(atlas_texture, atlas_sampler, in.tex_coord, layer).rgb;
     } else {
         // Height-based Arizona desert palette fallback.
         let h = in.height_color;
@@ -129,25 +132,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.world_normal);
     let ndotl = max(dot(normal, sun_dir), 0.0);
 
-    let ambient = 0.6;
-    let diffuse = 0.8 * ndotl;
-
-    // mix(0.3, 1.0, shadow) keeps fill light in shadowed areas.
+    // terrain_combined_classic.frag: (visibility * 0.75 * lambert + 0.25),
+    // scaled by the lightmap's per-tile occlusion. Classic terrain carries no
+    // specular term, and the lightmap is applied flat rather than through the
+    // pow(a, 2-a) curve, which upstream uses only at High.
     let shadow = compute_shadow(in.world_pos);
-    let lit_diffuse = diffuse * mix(0.3, 1.0, shadow);
-
-    // Per-tile AO from R8Unorm lightmap. WZ2100 adaptive gamma: darker tiles get stronger correction.
     let lm_uv = in.world_xz / uniforms.map_world_size.xy;
-    let lm_value = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
-    let tile_brightness = pow(lm_value, 2.0 - lm_value);
+    let tile_brightness = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
 
-    var lit_color = base_color * (ambient * tile_brightness + lit_diffuse);
-
-    // Blinn-Phong specular, shininess=16, strength=0.08.
-    let view_dir = normalize(uniforms.camera_pos.xyz - in.world_pos);
-    let half_dir = normalize(sun_dir + view_dir);
-    let spec = pow(max(dot(normal, half_dir), 0.0), 16.0);
-    lit_color += vec3<f32>(1.0, 0.95, 0.85) * spec * 0.08 * shadow;
+    var lit_color = base_color * ((shadow * 0.75 * ndotl + 0.25) * tile_brightness);
 
     if uniforms.brush_highlight.w > 0.5 {
         let brush_center = uniforms.brush_highlight.xy;

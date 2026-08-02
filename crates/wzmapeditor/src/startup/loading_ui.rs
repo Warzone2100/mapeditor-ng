@@ -188,7 +188,7 @@ pub fn poll_ground_texture_load(ctx: &egui::Context, app: &mut EditorApp) {
                 queue,
                 "ground_diffuse_array",
                 &payload.diffuse,
-                wgpu::TextureFormat::Rgba8UnormSrgb,
+                crate::viewport::atlas_gpu::TexelEncoding::Srgb,
                 1024,
                 num_layers,
             );
@@ -201,7 +201,7 @@ pub fn poll_ground_texture_load(ctx: &egui::Context, app: &mut EditorApp) {
                 queue,
                 "ground_normal_array",
                 &payload.normals,
-                wgpu::TextureFormat::Rgba8Unorm,
+                crate::viewport::atlas_gpu::TexelEncoding::Linear,
                 1024,
                 num_layers,
             );
@@ -214,7 +214,7 @@ pub fn poll_ground_texture_load(ctx: &egui::Context, app: &mut EditorApp) {
                 queue,
                 "ground_specular_array",
                 &payload.specular,
-                wgpu::TextureFormat::Rgba8Unorm,
+                crate::viewport::atlas_gpu::TexelEncoding::Linear,
                 1024,
                 num_layers,
             );
@@ -227,7 +227,7 @@ pub fn poll_ground_texture_load(ctx: &egui::Context, app: &mut EditorApp) {
                 queue,
                 "decal_diffuse_array",
                 &payload.decal_diffuse,
-                wgpu::TextureFormat::Rgba8UnormSrgb,
+                crate::viewport::atlas_gpu::TexelEncoding::Srgb,
                 256,
                 num_decal_tiles,
             );
@@ -240,7 +240,7 @@ pub fn poll_ground_texture_load(ctx: &egui::Context, app: &mut EditorApp) {
                 queue,
                 "decal_normal_array",
                 &payload.decal_normal,
-                wgpu::TextureFormat::Rgba8Unorm,
+                crate::viewport::atlas_gpu::TexelEncoding::Linear,
                 256,
                 num_decal_tiles,
             );
@@ -249,7 +249,7 @@ pub fn poll_ground_texture_load(ctx: &egui::Context, app: &mut EditorApp) {
                 queue,
                 "decal_specular_array",
                 &payload.decal_specular,
-                wgpu::TextureFormat::Rgba8Unorm,
+                crate::viewport::atlas_gpu::TexelEncoding::Linear,
                 256,
                 num_decal_tiles,
             );

@@ -12,6 +12,21 @@ use super::texture_loader::downsample_2x;
 /// trilinear filtering alone leaves blurry. Requires all filter modes Linear.
 pub(crate) const MAX_ANISOTROPY: u16 = 16;
 
+/// Transfer curve carried by a texture array's RGB bytes.
+///
+/// Every array uploads as `Rgba8Unorm` because the viewport shades in gamma
+/// space like the game, so the GPU format no longer says whether the bytes are
+/// sRGB-encoded. Mip generation still needs to know: diffuse bytes must be
+/// decoded to linear light before averaging or minified ground darkens, while
+/// normal and specular data must be averaged as raw bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TexelEncoding {
+    /// Diffuse colour, sRGB-encoded.
+    Srgb,
+    /// Normal, specular or other data with no transfer curve.
+    Linear,
+}
+
 /// Tileset atlas GPU bind group and layout.
 pub struct AtlasState {
     pub bind_group: wgpu::BindGroup,
@@ -57,7 +72,7 @@ impl AtlasState {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -112,7 +127,7 @@ impl AtlasState {
             queue,
             "tileset_atlas",
             tile_rgba,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            TexelEncoding::Srgb,
             tile_size,
             num_layers,
         );
@@ -147,16 +162,17 @@ impl AtlasState {
     }
 }
 
-/// Upload a single texture array and return its view.
+/// Upload a single `Rgba8Unorm` texture array and return its view.
 ///
 /// Used by the chunked ground-texture upload path: no bind group is
 /// touched here so the caller can spread multiple arrays across frames.
+/// `encoding` drives mip averaging only; see [`TexelEncoding`].
 pub fn upload_texture_array(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
     data: &[u8],
-    format: wgpu::TextureFormat,
+    encoding: TexelEncoding,
     size: u32,
     layers: u32,
 ) -> wgpu::TextureView {
@@ -185,13 +201,13 @@ pub fn upload_texture_array(
         mip_level_count,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format,
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
     if mipmapped {
-        let srgb = matches!(format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let srgb = encoding == TexelEncoding::Srgb;
         for layer in 0..layers {
             let start = layer as usize * layer_bytes;
             let layer_data = &data[start..start + layer_bytes];

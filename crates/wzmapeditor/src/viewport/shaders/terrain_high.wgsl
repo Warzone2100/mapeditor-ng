@@ -114,6 +114,9 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
+// Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
+const MIN_SHADOW_VISIBILITY: f32 = 0.5;
+
 fn sample_shadow(shadow_pos: vec4<f32>) -> f32 {
     let proj = shadow_pos.xyz / shadow_pos.w;
     let uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
@@ -131,7 +134,8 @@ fn sample_shadow(shadow_pos: vec4<f32>) -> f32 {
             shadow += textureSampleCompare(shadow_map, shadow_sampler, uv + offset, depth);
         }
     }
-    return select(1.0, shadow / 9.0, in_bounds);
+    let pcf = mix(MIN_SHADOW_VISIBILITY, 1.0, shadow / 9.0);
+    return select(1.0, pcf, in_bounds);
 }
 
 fn ground_uv(ground_no: u32, world_xz: vec2<f32>) -> vec2<f32> {
@@ -214,9 +218,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         gloss = mix(gloss, decal_spec, a);
     }
 
-    // Tangent-space lighting per doBumpMapping(). Ambient 0.6 vs WZ2100's 0.5
-    // compensates for the missing additive lightmap RGB term in the editor.
-    let ambient_light = vec3<f32>(0.6, 0.6, 0.6);
+    // Tangent-space lighting per doBumpMapping().
+    let ambient_light = vec3<f32>(0.5, 0.5, 0.5);
     let diffuse_light = vec3<f32>(1.0, 1.0, 1.0);
     let specular_light = vec3<f32>(1.0, 1.0, 1.0);
 
@@ -238,10 +241,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let lm_value = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
     let tile_brightness = pow(lm_value, 2.0 - lm_value);
 
-    // WZ2100: res = color * light + light_spec.
+    // WZ2100: res = color * light + light_spec, then the whole result is scaled
+    // by the flat lightmap again — terrain_combined_high.frag applies it twice,
+    // through the pow(a, 2-a) curve on ambient and flat over the combination.
     let light = ambient_light * tile_brightness + diffuse_light * visibility;
     let light_spec = specular_light * spec_factor * visibility * (gloss * gloss);
-    var final_color = color * light + light_spec;
+    var final_color = (color * light + light_spec) * lm_value;
 
     if u.brush_highlight.w > 0.5 {
         let brush_center = u.brush_highlight.xy;

@@ -89,9 +89,9 @@ pub(crate) fn load_texture_offline(
 ) -> Option<TexturePageData> {
     let texpages_rel = Path::new(TEXPAGES_REL);
 
-    // Diffuse KTX2 from high.wz is linear; convert to sRGB so the
-    // Rgba8UnormSrgb GPU format round-trips. Normal/specular maps stay
-    // linear and upload as Rgba8Unorm.
+    // Diffuse KTX2 from high.wz is linear; encode to sRGB so it matches the
+    // PNG diffuse pages the shader lights directly. Normal/specular maps
+    // carry no curve and stay linear.
     let is_diffuse = !texture_page.contains("_nm")
         && !texture_page.contains("_sm")
         && !texture_page.contains("_tcmask");

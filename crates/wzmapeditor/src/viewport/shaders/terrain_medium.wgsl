@@ -93,6 +93,9 @@ fn sample_ground(ground_no: u32, world_xz: vec2<f32>) -> vec3<f32> {
     return textureSample(ground_texture, ground_sampler, uv, ground_no).rgb;
 }
 
+// Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
+const MIN_SHADOW_VISIBILITY: f32 = 0.5;
+
 // 3x3 PCF shadow with depth bias to mask acne.
 fn compute_shadow(world_pos: vec3<f32>) -> f32 {
     let shadow_pos = uniforms.shadow_mvp * vec4<f32>(world_pos, 1.0);
@@ -122,7 +125,8 @@ fn compute_shadow(world_pos: vec3<f32>) -> f32 {
             );
         }
     }
-    return select(1.0, visibility / 9.0, in_bounds);
+    let pcf = mix(MIN_SHADOW_VISIBILITY, 1.0, visibility / 9.0);
+    return select(1.0, pcf, in_bounds);
 }
 
 @fragment
@@ -148,24 +152,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.world_normal);
     let ndotl = max(dot(normal, sun_dir), 0.0);
 
-    let ambient = 0.6;
-    let diffuse = 0.8 * ndotl;
-
+    // terrain_combined_medium.frag: (visibility * 0.8 * lambert^2 + 0.2),
+    // scaled by the lightmap's per-tile occlusion. Medium squares the lambert
+    // term and carries no specular; the pow(a, 2-a) curve is High-only.
     let shadow = compute_shadow(in.world_pos);
-    let lit_diffuse = diffuse * mix(0.3, 1.0, shadow);
-
-    // Per-tile AO from R8Unorm lightmap. WZ2100 adaptive gamma: darker tiles get stronger correction.
     let lm_uv = in.world_xz / uniforms.map_world_size.xy;
-    let lm_value = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
-    let tile_brightness = pow(lm_value, 2.0 - lm_value);
+    let tile_brightness = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
 
-    var lit_color = base_color * (ambient * tile_brightness + lit_diffuse);
-
-    // Blinn-Phong specular, shininess=16, strength=0.08.
-    let view_dir = normalize(uniforms.camera_pos.xyz - in.world_pos);
-    let half_dir = normalize(sun_dir + view_dir);
-    let spec = pow(max(dot(normal, half_dir), 0.0), 16.0);
-    lit_color += vec3<f32>(1.0, 0.95, 0.85) * spec * 0.08 * shadow;
+    var lit_color = base_color * ((shadow * 0.8 * ndotl * ndotl + 0.2) * tile_brightness);
 
     if uniforms.brush_highlight.w > 0.5 {
         let brush_center = uniforms.brush_highlight.xy;
