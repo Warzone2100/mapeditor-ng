@@ -35,6 +35,9 @@ pub struct ModelLoader {
     /// first miss. Without it every cold `load_pie` walks the whole asset tree,
     /// which is super-linear on the in-memory web archive.
     pie_file_index: Option<HashMap<String, std::path::PathBuf>>,
+    /// Decoded page name to dimensions, recorded at GPU upload so the
+    /// renderer diagnostics report can list what actually loaded.
+    texture_page_sizes: std::collections::BTreeMap<String, (u32, u32)>,
 }
 
 impl std::fmt::Debug for ModelLoader {
@@ -55,6 +58,26 @@ impl ModelLoader {
             assets,
             cache: LoaderCache::new(stats),
             pie_file_index: None,
+            texture_page_sizes: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Decoded model texture pages and their dimensions, for diagnostics.
+    pub fn texture_page_sizes(&self) -> impl Iterator<Item = (&str, u32, u32)> {
+        self.texture_page_sizes
+            .iter()
+            .map(|(name, &(w, h))| (name.as_str(), w, h))
+    }
+
+    /// Number of models uploaded to the GPU, for diagnostics.
+    pub fn uploaded_count(&self) -> usize {
+        self.cache.uploaded_len()
+    }
+
+    fn record_page_sizes(&mut self, pages: [Option<&TexturePageData>; 4]) {
+        for page in pages.into_iter().flatten() {
+            self.texture_page_sizes
+                .insert(page.page_name.clone(), (page.width, page.height));
         }
     }
 
@@ -189,6 +212,12 @@ impl ModelLoader {
             let has_tcmask = prepared.tcmask_data.is_some();
             let has_normal = prepared.normal_data.is_some();
             let has_specular = prepared.specular_data.is_some();
+            self.record_page_sizes([
+                prepared.texture_data.as_ref(),
+                prepared.tcmask_data.as_ref(),
+                prepared.normal_data.as_ref(),
+                prepared.specular_data.as_ref(),
+            ]);
             let tex = prepared
                 .texture_data
                 .as_ref()
@@ -260,6 +289,12 @@ impl ModelLoader {
 
         if let Some(mesh) = pie_mesh::build_mesh(&parsed.pie) {
             let has_tcmask = parsed.tcmask_data.is_some();
+            self.record_page_sizes([
+                parsed.texture_data.as_ref(),
+                parsed.tcmask_data.as_ref(),
+                parsed.normal_data.as_ref(),
+                parsed.specular_data.as_ref(),
+            ]);
             let tex = parsed
                 .texture_data
                 .as_ref()

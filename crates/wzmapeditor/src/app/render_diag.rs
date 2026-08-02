@@ -63,7 +63,33 @@ fn collect(app: &EditorApp) -> Vec<Line> {
     ];
     collect_map(app, &mut lines);
     collect_ground_data(app, &mut lines);
+    collect_models(app, &mut lines);
     lines
+}
+
+/// Report the model texture pages that reached the GPU: dimensions decide
+/// the atlas mip count, so an unexpectedly small or non-square page here
+/// explains blurry or aliased structures.
+fn collect_models(app: &EditorApp, lines: &mut Vec<Line>) {
+    let Some(loader) = app.model_loader.as_ref() else {
+        lines.push(info("Models: loader not started".to_owned()));
+        return;
+    };
+
+    let pages: Vec<(&str, u32, u32)> = loader.texture_page_sizes().collect();
+    lines.push(info(format!(
+        "Models: {} uploaded, {} texture pages:",
+        loader.uploaded_count(),
+        pages.len()
+    )));
+    for (name, w, h) in pages {
+        let mips = crate::viewport::model_gpu::atlas_mip_level_count(w, h);
+        if mips > 1 {
+            lines.push(info(format!("  {name} {w}x{h}, {mips} mips")));
+        } else {
+            lines.push(warn(format!("  {name} {w}x{h}, no mip chain")));
+        }
+    }
 }
 
 fn collect_map(app: &EditorApp, lines: &mut Vec<Line>) {

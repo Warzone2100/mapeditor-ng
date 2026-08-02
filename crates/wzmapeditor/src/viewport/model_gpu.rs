@@ -353,7 +353,7 @@ impl ModelResources {
 /// Full mip chain for square power-of-two pages (all stock assets), one
 /// level otherwise: the CPU downsampler and `write_mipmapped_array_layer`
 /// only walk square dimensions.
-fn atlas_mip_level_count(w: u32, h: u32) -> u32 {
+pub(crate) fn atlas_mip_level_count(w: u32, h: u32) -> u32 {
     if w == h && w.is_power_of_two() {
         w.ilog2() + 1
     } else {
