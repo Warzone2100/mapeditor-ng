@@ -332,7 +332,7 @@ fn make_default_lightmap(device: &wgpu::Device, queue: &wgpu::Queue) -> DefaultL
     }
 }
 
-/// Create a `Linear/Linear/Repeat` sampler with the given label.
+/// Create a trilinear anisotropic `Repeat` sampler with the given label.
 fn repeat_linear_sampler(device: &wgpu::Device, label: &'static str) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(label),
@@ -340,6 +340,8 @@ fn repeat_linear_sampler(device: &wgpu::Device, label: &'static str) -> wgpu::Sa
         address_mode_v: wgpu::AddressMode::Repeat,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: super::atlas_gpu::MAX_ANISOTROPY,
         ..Default::default()
     })
 }

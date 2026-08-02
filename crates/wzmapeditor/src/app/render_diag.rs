@@ -19,7 +19,7 @@ const MAX_ROWS: usize = 8;
 
 /// Bumped with every shading change. A cached wasm build is otherwise
 /// indistinguishable from the current one in a pasted report.
-const SHADING_REVISION: u32 = 3;
+const SHADING_REVISION: u32 = 4;
 
 /// One report line and whether it describes a problem.
 struct Line {

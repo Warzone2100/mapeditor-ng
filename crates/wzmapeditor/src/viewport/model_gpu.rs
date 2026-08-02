@@ -161,7 +161,9 @@ impl ModelResources {
     /// All four maps must share one `Rgba8Unorm` `Texture2DArray`, so any
     /// size mismatch is reconciled here by nearest-neighbour resizing the
     /// smaller maps up to the largest (w, h). Stock WZ2100 assets already
-    /// match, so the resize is usually a no-op.
+    /// match, so the resize is usually a no-op. Each layer uploads with a
+    /// full CPU mip chain: the pages are 1024-2048px and always minified
+    /// at editor camera distances, so a single level aliases badly.
     fn ensure_page_atlas(
         &mut self,
         device: &wgpu::Device,
@@ -232,6 +234,7 @@ impl ModelResources {
             }
         }
 
+        let mip_level_count = atlas_mip_level_count(max_w, max_h);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("model_page_atlas"),
             size: wgpu::Extent3d {
@@ -239,32 +242,49 @@ impl ModelResources {
                 height: max_h,
                 depth_or_array_layers: 4,
             },
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &atlas,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * max_w),
-                rows_per_image: Some(max_h),
-            },
-            wgpu::Extent3d {
-                width: max_w,
-                height: max_h,
-                depth_or_array_layers: 4,
-            },
-        );
+        if mip_level_count > 1 {
+            for slot in 0..4u32 {
+                let start = slot as usize * layer_pixels;
+                let layer = &atlas[start..start + layer_pixels];
+                // Only the diffuse layer carries sRGB-encoded colour; the
+                // mask / normal / specular maps average as raw bytes.
+                super::atlas_gpu::write_mipmapped_array_layer(
+                    queue,
+                    &texture,
+                    layer,
+                    max_w,
+                    slot,
+                    slot == 0,
+                );
+            }
+        } else {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &atlas,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * max_w),
+                    rows_per_image: Some(max_h),
+                },
+                wgpu::Extent3d {
+                    width: max_w,
+                    height: max_h,
+                    depth_or_array_layers: 4,
+                },
+            );
+        }
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
@@ -330,6 +350,17 @@ impl ModelResources {
     }
 }
 
+/// Full mip chain for square power-of-two pages (all stock assets), one
+/// level otherwise: the CPU downsampler and `write_mipmapped_array_layer`
+/// only walk square dimensions.
+fn atlas_mip_level_count(w: u32, h: u32) -> u32 {
+    if w == h && w.is_power_of_two() {
+        w.ilog2() + 1
+    } else {
+        1
+    }
+}
+
 /// Copy an RGBA layer, optionally stamping a fixed alpha (used for the
 /// normal / specular present-marker).
 fn copy_layer(dst: &mut [u8], src: &[u8], force_alpha: Option<u8>) {
@@ -376,5 +407,19 @@ fn nearest_resize(
             dst[d + 2] = src[s + 2];
             dst[d + 3] = force_alpha.unwrap_or(src[s + 3]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::atlas_mip_level_count;
+
+    #[test]
+    fn mip_count_covers_stock_pages_and_falls_back_otherwise() {
+        assert_eq!(atlas_mip_level_count(1024, 1024), 11);
+        assert_eq!(atlas_mip_level_count(2048, 2048), 12);
+        assert_eq!(atlas_mip_level_count(1, 1), 1);
+        assert_eq!(atlas_mip_level_count(1024, 512), 1);
+        assert_eq!(atlas_mip_level_count(768, 768), 1);
     }
 }
