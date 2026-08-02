@@ -38,6 +38,11 @@ pub struct GroundData {
     ///
     /// Stored as 16 floats (enough for up to 16 ground types per tileset).
     pub ground_scales: [f32; 16],
+    /// Terrain type per tile index, used to weight the ground-type vote.
+    ///
+    /// The tileset's canonical table, matching what WZ2100 reads from the
+    /// map's `.ttp`. Empty leaves every tile at the default vote weight.
+    pub terrain_types: Vec<wz_maplib::TerrainType>,
 }
 
 impl GroundData {
@@ -50,21 +55,24 @@ impl GroundData {
     pub fn load(assets: &dyn crate::assets::AssetSource, tileset: &str) -> Option<Self> {
         let tileset_rel = Path::new("base").join("tileset");
 
-        let (gtype_file, ground_file, decals_file) = match tileset {
+        let (gtype_file, ground_file, decals_file, tileset_kind) = match tileset {
             "arizona" => (
                 "tertilesc1hwGtype.txt",
                 "arizonaground.txt",
                 "arizonadecals.txt",
+                crate::config::Tileset::Arizona,
             ),
             "urban" => (
                 "tertilesc2hwGtype.txt",
                 "urbanground.txt",
                 "urbandecals.txt",
+                crate::config::Tileset::Urban,
             ),
             "rockies" => (
                 "tertilesc3hwGtype.txt",
                 "rockieground.txt",
                 "rockiedecals.txt",
+                crate::config::Tileset::Rockies,
             ),
             _ => {
                 log::warn!("Unknown tileset {tileset:?}, cannot load ground data");
@@ -115,6 +123,7 @@ impl GroundData {
             tile_grounds,
             decal_tiles,
             ground_scales,
+            terrain_types: tileset_kind.full_terrain_types(),
         })
     }
 
@@ -208,7 +217,15 @@ impl GroundData {
                 } else {
                     0
                 };
-                weight[idx] = 10; // Default weight; cliff/water weights skipped for simplicity
+                // Cliff faces outvote their neighbours so the cliff texture
+                // stays visible on steep ground, and water bottom is outvoted
+                // so it stays inside the water instead of bleeding onto land.
+                // Weights match WZ2100 src/map.cpp.
+                weight[idx] = match self.terrain_types.get(tile_idx) {
+                    Some(wz_maplib::TerrainType::Cliffface) => 100,
+                    Some(wz_maplib::TerrainType::Water) => 1,
+                    _ => 10,
+                };
             }
         }
 
@@ -546,6 +563,7 @@ mod tests {
             tile_grounds: vec![[0; 4]; 5],
             decal_tiles: vec![false, true, false, false, true],
             ground_scales: [1.0; 16],
+            terrain_types: vec![],
         };
         assert!(!gd.is_decal(0));
         assert!(gd.is_decal(1));
@@ -553,6 +571,59 @@ mod tests {
         assert!(gd.is_decal(4));
         // Out of bounds returns false.
         assert!(!gd.is_decal(100));
+    }
+
+    /// Tile 0 is sand everywhere, tile 1 is the terrain type under test.
+    fn voting_ground_data(under_test: wz_maplib::TerrainType) -> GroundData {
+        GroundData {
+            ground_types: vec![],
+            tile_grounds: vec![[SAND; 4], [OTHER; 4]],
+            decal_tiles: vec![false, false],
+            ground_scales: [1.0; 16],
+            terrain_types: vec![wz_maplib::TerrainType::Sand, under_test],
+        }
+    }
+
+    const SAND: u8 = 0;
+    const OTHER: u8 = 3;
+
+    /// Vertex (1, 1) of a 2x2 map draws its four corners from every tile, so
+    /// `odd_tiles` controls how many of them use texture 1 (the terrain type
+    /// under test) versus texture 0.
+    fn map_with_odd_tiles(odd_tiles: &[(u32, u32)]) -> wz_maplib::MapData {
+        let mut map = wz_maplib::MapData::new(2, 2);
+        for &(x, y) in odd_tiles {
+            map.tile_mut(x, y).expect("tile in range").texture = 1;
+        }
+        map
+    }
+
+    #[test]
+    fn cliff_outvotes_three_plain_neighbours() {
+        let gd = voting_ground_data(wz_maplib::TerrainType::Cliffface);
+        let map = map_with_odd_tiles(&[(1, 1)]);
+        // One cliff corner at weight 100 beats three plain corners at 10 each,
+        // where an unweighted vote would lose 10 to 30.
+        assert_eq!(gd.determine_ground_type(&map, 1, 1, 2, 2), OTHER);
+    }
+
+    #[test]
+    fn water_bottom_loses_to_a_single_plain_neighbour() {
+        let gd = voting_ground_data(wz_maplib::TerrainType::Water);
+        let map = map_with_odd_tiles(&[(0, 0), (1, 0), (0, 1)]);
+        // Three water corners at weight 1 lose to one plain corner at 10, so
+        // the bottom texture stays inside the water. Unweighted it would win
+        // 30 to 10 and bleed onto the land.
+        assert_eq!(gd.determine_ground_type(&map, 1, 1, 2, 2), SAND);
+    }
+
+    #[test]
+    fn plain_majority_still_wins_without_a_special_terrain_type() {
+        // Same three-corner majority, but ordinary terrain: the weighting must
+        // not disturb the plain-vote outcome.
+        let gd = voting_ground_data(wz_maplib::TerrainType::Sand);
+        let map = map_with_odd_tiles(&[(0, 0), (1, 0), (0, 1)]);
+        assert_eq!(gd.determine_ground_type(&map, 1, 1, 2, 2), OTHER);
     }
 
     #[test]
