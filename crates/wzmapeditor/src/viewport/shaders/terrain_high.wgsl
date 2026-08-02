@@ -117,13 +117,18 @@ fn vs_main(in: VertexIn) -> VertexOut {
 // Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
 const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 
-fn sample_shadow(shadow_pos: vec4<f32>) -> f32 {
+fn sample_shadow(shadow_pos: vec4<f32>, n_dot_l: f32) -> f32 {
     let proj = shadow_pos.xyz / shadow_pos.w;
     let uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
     // WebGPU bans textureSampleCompare in non-uniform control flow, so the
     // out-of-bounds case folds into select() rather than an early return.
     let in_bounds = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && proj.z <= 1.0;
-    let bias = 0.003;
+    // Slope-scaled bias per shadow_mapping.glsl, expressed in world units:
+    // the whole-map shadow frustum is 3x the map's larger extent deep
+    // (compute_shadow_mvp), so a fixed NDC constant would grow with map size.
+    let depth_range = 3.0 * max(u.map_world_size.x, u.map_world_size.y);
+    let slope = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0)) / max(n_dot_l, 0.1);
+    let bias = min(2.0 + 8.0 * slope, 60.0) / max(depth_range, 1.0);
     let depth = proj.z - bias;
     let tex_size = vec2<f32>(textureDimensions(shadow_map));
     let texel = 1.0 / tex_size;
@@ -226,7 +231,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let L = normalize(in.ground_light_dir);
     let diffuse_factor = max(dot(ts_normal, L), 0.0);
 
-    let shadow = sample_shadow(in.shadow_pos);
+    let shadow = sample_shadow(in.shadow_pos, diffuse_factor);
     let visibility = min(diffuse_factor, shadow * diffuse_factor);
 
     // Blinn exponent = reflectionValue * (1 - specMap^2), reflectionValue=16 per terrain_combined_high.frag.

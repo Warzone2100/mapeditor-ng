@@ -1,9 +1,12 @@
 //! Shadow depth pass: bind group layouts, pipelines, and per-frame encoding.
 //!
 //! The shadow pass renders terrain plus model instances into a 2048x2048
-//! depth-only target. Front-face culling combined with a small constant +
-//! slope-scaled bias controls acne; the cached depth is sampled by the main
-//! terrain/model passes through a comparison sampler.
+//! depth-only target; the cached depth is sampled by the main terrain/model
+//! passes through a comparison sampler. Models cull front faces so their
+//! back sides carry the depth; the terrain mesh has mixed winding (its main
+//! pass culls nothing either), so culling either face would drop about half
+//! the tiles from the shadow map, and acne is handled by the write-time
+//! slope-scaled bias plus the shaders' slope-scaled read bias.
 
 use glam::Mat4;
 
@@ -70,7 +73,7 @@ pub(super) fn build(device: &wgpu::Device) -> ShadowPassBuild {
         &pipeline_layout,
         &terrain_shader,
         &[TerrainVertex::desc()],
-        Some(wgpu::Face::Front),
+        None,
         DepthConfig::WriteBiased(bias),
     );
     let model_pipeline = pipelines::create_depth_only_pipeline(

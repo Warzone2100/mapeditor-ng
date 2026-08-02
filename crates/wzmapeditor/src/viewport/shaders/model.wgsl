@@ -103,7 +103,7 @@ const AMBIENT: f32 = 0.5;               // WZ2100 piedraw.cpp LIGHT_AMBIENT
 const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 
 // 3x3 PCF shadow with depth bias.
-fn compute_shadow(world_pos: vec3<f32>) -> f32 {
+fn compute_shadow(world_pos: vec3<f32>, n_dot_l: f32) -> f32 {
     let shadow_pos = uniforms.shadow_mvp * vec4<f32>(world_pos, 1.0);
     let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
 
@@ -120,7 +120,13 @@ fn compute_shadow(world_pos: vec3<f32>) -> f32 {
 
     let texel_size = 1.0 / f32(textureDimensions(shadow_map).x);
     var visibility = 0.0;
-    let bias = 0.005;
+    // Slope-scaled bias per shadow_mapping.glsl, expressed in world units;
+    // the whole-map shadow frustum is 3x the map's larger extent deep
+    // (compute_shadow_mvp). Tighter than the terrain's, matching upstream's
+    // smaller model offset, so small objects don't peter-pan.
+    let depth_range = 3.0 * max(uniforms.map_world_size.x, uniforms.map_world_size.y);
+    let slope = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0)) / max(n_dot_l, 0.1);
+    let bias = min(1.0 + 4.0 * slope, 30.0) / max(depth_range, 1.0);
     for (var y = -1i; y <= 1i; y++) {
         for (var x = -1i; x <= 1i; x++) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
@@ -177,7 +183,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Classic scales its single light term by visibility; HQ folds visibility
     // into the diffuse term and leaves ambient unshadowed.
-    let shadow = compute_shadow(in.world_pos);
+    let shadow = compute_shadow(in.world_pos, max(dot(N, sun_dir), 0.0));
 
     // No lightmap term: tcmask_instanced.frag reads only the lightmap's *rgb*
     // for models (point-light colour, zero in an ordinary scene) and never its

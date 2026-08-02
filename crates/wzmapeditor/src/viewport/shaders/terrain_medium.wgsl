@@ -101,7 +101,7 @@ const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 const AMBIENT: f32 = 0.5;
 
 // 3x3 PCF shadow with depth bias to mask acne.
-fn compute_shadow(world_pos: vec3<f32>) -> f32 {
+fn compute_shadow(world_pos: vec3<f32>, n_dot_l: f32) -> f32 {
     let shadow_pos = uniforms.shadow_mvp * vec4<f32>(world_pos, 1.0);
     let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
     let shadow_uv = vec2<f32>(
@@ -117,7 +117,12 @@ fn compute_shadow(world_pos: vec3<f32>) -> f32 {
 
     let texel_size = 1.0 / f32(textureDimensions(shadow_map).x);
     var visibility = 0.0;
-    let bias = 0.003;
+    // Slope-scaled bias per shadow_mapping.glsl, expressed in world units:
+    // the whole-map shadow frustum is 3x the map's larger extent deep
+    // (compute_shadow_mvp), so a fixed NDC constant would grow with map size.
+    let depth_range = 3.0 * max(uniforms.map_world_size.x, uniforms.map_world_size.y);
+    let slope = sqrt(max(1.0 - n_dot_l * n_dot_l, 0.0)) / max(n_dot_l, 0.1);
+    let bias = min(2.0 + 8.0 * slope, 60.0) / max(depth_range, 1.0);
     for (var y = -1i; y <= 1i; y++) {
         for (var x = -1i; x <= 1i; x++) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
@@ -160,7 +165,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // + ambientLight * 0.2), scaled by the lightmap's per-tile occlusion.
     // Medium squares the lambert term and carries no specular; the
     // pow(a, 2-a) curve is High-only.
-    let shadow = compute_shadow(in.world_pos);
+    let shadow = compute_shadow(in.world_pos, ndotl);
     let lm_uv = in.world_xz / uniforms.map_world_size.xy;
     let tile_brightness = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
 
