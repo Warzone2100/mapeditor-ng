@@ -1,14 +1,19 @@
-//! Terrain lightmap: per-tile sun illumination and ambient occlusion.
+//! Terrain lightmap: per-tile ambient occlusion.
 //!
-//! Produces an R8 texture at map resolution (one pixel per tile), storing
-//! `sun_diffuse * ambient_occlusion`. Matches WZ2100's `src/lighting.cpp`.
+//! Produces an R8 texture at map resolution (one pixel per tile) holding
+//! ambient occlusion alone. Matches WZ2100's `tile->ambientOcclusion`
+//! (`src/lighting.cpp` `calcTileIllum`), which is what `getTileIllumination`
+//! feeds to the lightmap: *"sunlight is handled by shaders so only AO needed
+//! for lightmap"* (`src/advvis.cpp`). The sun's lambert term belongs to the
+//! terrain and model shaders, which compute it per fragment; baking it in here
+//! as well would apply it twice.
 
-use glam::Vec3;
 use wz_maplib::MapData;
 use wz_maplib::constants::TILE_UNITS_F32;
 
-/// Matches WZ2100's `MIN_ILLUM` floor; prevents fully-black tiles in valleys.
-const MIN_BRIGHTNESS: f32 = 24.0;
+/// Occlusion floor, matching WZ2100's clamp on `tile->ambientOcclusion`.
+/// Keeps deep valleys legible rather than black.
+const MIN_BRIGHTNESS: f32 = 60.0;
 
 /// Stays just below pure white so surface detail isn't lost when the
 /// shader scales the lightmap.
@@ -25,22 +30,20 @@ pub struct Lightmap {
     pub data: Vec<u8>,
 }
 
-/// Compute terrain lightmap from map heights and sun direction.
-pub fn compute_lightmap(map: &MapData, sun_dir: Vec3) -> Lightmap {
+/// Compute the terrain lightmap from map heights.
+///
+/// Takes no sun direction: the value is pure ambient occlusion, so it only
+/// changes when the terrain does.
+pub fn compute_lightmap(map: &MapData) -> Lightmap {
     let w = map.width;
     let h = map.height;
-    let sun = sun_dir.normalize();
     let mut data = vec![0u8; (w * h) as usize];
 
     for ty in 0..h {
         for tx in 0..w {
-            let normal = tile_normal(map, tx, ty);
-            let diffuse = normal.dot(sun).max(0.0);
             let ao = tile_ambient_occlusion(map, tx, ty);
-            let brightness =
-                (diffuse * ao * MAX_BRIGHTNESS).clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS) as u8;
-
-            data[(ty * w + tx) as usize] = brightness;
+            data[(ty * w + tx) as usize] =
+                (ao * MAX_BRIGHTNESS).clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS) as u8;
         }
     }
 
@@ -49,26 +52,6 @@ pub fn compute_lightmap(map: &MapData, sun_dir: Vec3) -> Lightmap {
         height: h,
         data,
     }
-}
-
-fn tile_normal(map: &MapData, tx: u32, ty: u32) -> Vec3 {
-    let w = map.width;
-    let h = map.height;
-
-    let get_h = |x: u32, y: u32| -> f32 {
-        map.tile(x.min(w - 1), y.min(h - 1))
-            .map_or(0.0, |t| t.height as f32)
-    };
-
-    let hc = get_h(tx, ty);
-    let hx = if tx + 1 < w { get_h(tx + 1, ty) } else { hc };
-    let hz = if ty + 1 < h { get_h(tx, ty + 1) } else { hc };
-    let hxn = if tx > 0 { get_h(tx - 1, ty) } else { hc };
-    let hzn = if ty > 0 { get_h(tx, ty - 1) } else { hc };
-
-    let dx = (hxn - hx) / (2.0 * TILE_UNITS_F32);
-    let dz = (hzn - hz) / (2.0 * TILE_UNITS_F32);
-    Vec3::new(dx, 1.0, dz).normalize()
 }
 
 /// Ambient occlusion via 8-direction horizon scanning (matches WZ2100 `calcTileIllum`).
@@ -131,17 +114,9 @@ mod tests {
     }
 
     #[test]
-    fn flat_terrain_normal_points_up() {
-        let map = MapData::new(8, 8);
-        let n = tile_normal(&map, 4, 4);
-        assert!((n.y - 1.0).abs() < 0.01, "normal = {n}");
-    }
-
-    #[test]
     fn lightmap_dimensions_match_map() {
         let map = MapData::new(16, 16);
-        let sun = Vec3::new(0.286, 0.763, 0.572).normalize();
-        let lm = compute_lightmap(&map, sun);
+        let lm = compute_lightmap(&map);
         assert_eq!(lm.width, 16);
         assert_eq!(lm.height, 16);
         assert_eq!(lm.data.len(), 16 * 16);
@@ -150,8 +125,7 @@ mod tests {
     #[test]
     fn lightmap_brightness_within_range() {
         let map = MapData::new(8, 8);
-        let sun = Vec3::new(0.286, 0.763, 0.572).normalize();
-        let lm = compute_lightmap(&map, sun);
+        let lm = compute_lightmap(&map);
         for ty in 0..8u32 {
             for tx in 0..8u32 {
                 let b = lm.data[(ty * 8 + tx) as usize];
@@ -161,6 +135,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn flat_terrain_is_fully_unoccluded() {
+        // Flat ground carries no sun term now, so it must sit at the ceiling
+        // rather than at the sun's lambert factor.
+        let map = MapData::new(8, 8);
+        let lm = compute_lightmap(&map);
+        assert_eq!(lm.data[4 * 8 + 4], MAX_BRIGHTNESS as u8);
     }
 
     #[test]

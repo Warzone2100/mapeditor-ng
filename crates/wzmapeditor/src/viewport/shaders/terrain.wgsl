@@ -67,6 +67,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 // Floor on shadow visibility, per WZ2100 shadow_mapping.glsl.
 const MIN_SHADOW_VISIBILITY: f32 = 0.5;
 
+// WZ2100 piedraw.cpp LIGHT_AMBIENT. The shaders scale this rather than using a
+// bare literal, so the 0.25/0.2 weights below read as upstream writes them.
+const AMBIENT: f32 = 0.5;
+
 // 3x3 PCF shadow with depth bias.
 fn compute_shadow(world_pos: vec3<f32>) -> f32 {
     let shadow_pos = uniforms.shadow_mvp * vec4<f32>(world_pos, 1.0);
@@ -132,15 +136,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.world_normal);
     let ndotl = max(dot(normal, sun_dir), 0.0);
 
-    // terrain_combined_classic.frag: (visibility * 0.75 * lambert + 0.25),
-    // scaled by the lightmap's per-tile occlusion. Classic terrain carries no
-    // specular term, and the lightmap is applied flat rather than through the
-    // pow(a, 2-a) curve, which upstream uses only at High.
+    // terrain_combined_classic.frag: (visibility * 0.75 * lambert
+    // + ambientLight * 0.25), scaled by the lightmap's per-tile occlusion.
+    // Classic terrain carries no specular term, and the lightmap is applied
+    // flat rather than through the pow(a, 2-a) curve, which upstream uses only
+    // at High.
     let shadow = compute_shadow(in.world_pos);
     let lm_uv = in.world_xz / uniforms.map_world_size.xy;
     let tile_brightness = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
 
-    var lit_color = base_color * ((shadow * 0.75 * ndotl + 0.25) * tile_brightness);
+    var lit_color = base_color * ((shadow * 0.75 * ndotl + AMBIENT * 0.25) * tile_brightness);
 
     if uniforms.brush_highlight.w > 0.5 {
         let brush_center = uniforms.brush_highlight.xy;

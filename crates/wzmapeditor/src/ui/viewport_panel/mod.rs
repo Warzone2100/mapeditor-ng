@@ -187,10 +187,8 @@ pub fn show_viewport(ui: &mut Ui, app: &mut EditorApp) {
                     }
 
                     if app.lightmap_dirty {
-                        let map = &doc.map.map_data;
-                        let sun =
-                            glam::Vec3::from_slice(&resources.renderer.settings.sun_direction);
-                        let lightmap = crate::viewport::lightmap::compute_lightmap(map, sun);
+                        let lightmap =
+                            crate::viewport::lightmap::compute_lightmap(&doc.map.map_data);
                         resources.renderer.upload_lightmap(device, queue, &lightmap);
                         app.lightmap_dirty = false;
                     }

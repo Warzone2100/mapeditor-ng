@@ -15,6 +15,9 @@ struct Uniforms {
 
 @group(0) @binding(0)
 var<uniform> uniforms: Uniforms;
+// Declared but deliberately unsampled: group 0 is shared with the terrain
+// passes, so the layout carries the lightmap either way, and models take no
+// per-tile brightness from it (see the light term below).
 @group(0) @binding(1)
 var lightmap_texture: texture_2d<f32>;
 @group(0) @binding(2)
@@ -176,24 +179,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // into the diffuse term and leaves ambient unshadowed.
     let shadow = compute_shadow(in.world_pos);
 
-    // The lightmap stores sun_diffuse * ambient_occlusion per tile, so it
-    // scales the light rather than adding to it, letting structures inherit
-    // ground sun without ever exceeding their albedo. tcmask_instanced.frag
-    // adds lightmap *rgb* instead, but that channel is point-light colour and
-    // is zero in an ordinary scene; it never reads alpha for models.
-    // map_world_size.x == 1.0 is the thumbnail sentinel (no lightmap). Sampled
-    // before the non-uniform has_specularmap branch because WebGPU forbids
-    // implicit-LOD sampling in non-uniform control flow.
-    var tile_brightness = 1.0;
-    if uniforms.map_world_size.x > 1.0 {
-        let lm_uv = in.world_pos.xz / uniforms.map_world_size.xy;
-        tile_brightness = textureSample(lightmap_texture, lightmap_sampler, lm_uv).r;
-    }
-
+    // No lightmap term: tcmask_instanced.frag reads only the lightmap's *rgb*
+    // for models (point-light colour, zero in an ordinary scene) and never its
+    // per-tile brightness, which belongs to the terrain alone. Scaling models
+    // by it made them track the ground's occlusion, so a structure standing in
+    // a valley darkened with the valley floor instead of catching the sun.
     if has_specularmap {
         let lambertTerm = max(dot(N, sun_dir), 0.0);
 
-        let ambient_light = vec3<f32>(AMBIENT * tile_brightness) * tex_color.rgb;
+        // Upstream forces visibility to 1 for the ambient term on HQ models
+        // ("exclude double multiply"), so only the diffuse term is shadowed.
+        let ambient_light = vec3<f32>(AMBIENT) * tex_color.rgb;
         let diffuse_light = tex_color.rgb * lambertTerm * shadow;
         light = ambient_light + diffuse_light;
 
@@ -209,9 +205,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             specular_contrib = vec3<f32>(spec_value * gaussianTerm * lambertTerm);
         }
     } else {
-        // tcmask_instanced.frag classic: emissive is zero and ambient is
-        // doubled, so albedo scaled by visibility is the entire light term.
-        light = tex_color.rgb * (AMBIENT * 2.0) * tile_brightness * shadow;
+        // tcmask_instanced.frag classic: emissive is zero, the diffuse term is
+        // gated off by vanillaFactor, and ambient is doubled, so albedo scaled
+        // by visibility is the entire light term.
+        light = tex_color.rgb * (AMBIENT * 2.0) * shadow;
     }
 
     // Grain merge per tcmask_instanced.frag. This is the upstream blend and
