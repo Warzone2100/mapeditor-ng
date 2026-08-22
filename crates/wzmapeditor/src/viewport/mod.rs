@@ -46,7 +46,6 @@ impl std::fmt::Debug for ViewportResources {
 /// A paint callback that renders the 3D terrain viewport.
 pub struct TerrainPaintCallback {
     pub show_grid: bool,
-    pub show_border: bool,
     pub show_heatmap: bool,
     pub show_viewshed: bool,
     /// Snapshot from the UI phase so `prepare()` can write the latest
@@ -71,7 +70,6 @@ impl egui_wgpu::CallbackTrait for TerrainPaintCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         if let Some(resources) = callback_resources.get_mut::<ViewportResources>() {
             resources.renderer.show_grid = self.show_grid;
-            resources.renderer.show_border = self.show_border;
             resources.renderer.show_heatmap = self.show_heatmap;
             resources.renderer.show_viewshed = self.show_viewshed;
 
@@ -236,17 +234,6 @@ impl egui_wgpu::CallbackTrait for TerrainPaintCallback {
 
         if renderer.show_grid {
             render_pass.set_pipeline(&renderer.pipelines.grid);
-            render_pass.set_bind_group(0, &renderer.uniforms.bind_group, &[]);
-            render_pass.set_vertex_buffer(0, terrain_gpu.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                terrain_gpu.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            render_pass.draw_indexed(0..terrain_gpu.index_count, 0, 0..1);
-        }
-
-        if renderer.show_border {
-            render_pass.set_pipeline(&renderer.pipelines.border);
             render_pass.set_bind_group(0, &renderer.uniforms.bind_group, &[]);
             render_pass.set_vertex_buffer(0, terrain_gpu.vertex_buffer.slice(..));
             render_pass.set_index_buffer(

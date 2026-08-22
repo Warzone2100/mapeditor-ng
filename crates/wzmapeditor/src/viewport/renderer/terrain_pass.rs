@@ -1,4 +1,4 @@
-//! Terrain pipelines (Classic, Medium, High) plus the grid and border overlays.
+//! Terrain pipelines (Classic, Medium, High) plus the grid overlay.
 
 use eframe::wgpu::util::DeviceExt;
 use wz_maplib::MapData;
@@ -8,10 +8,7 @@ use super::super::ground_types::GroundData;
 use super::super::pipelines;
 use super::super::render_types::{GroundTextureState, TerrainGpuData};
 use super::super::terrain::{TerrainMesh, TerrainVertex};
-use super::util::{
-    BindGroupLayoutBuilder, OVERLAY_DEPTH_BIAS, PipelineRecipe, biased_overlay_pipeline,
-    pipeline_with_recipe,
-};
+use super::util::{BindGroupLayoutBuilder, PipelineRecipe, pipeline_with_recipe};
 
 /// Pipelines and bind group layouts produced by [`build`].
 pub(super) struct TerrainPassBuild {
@@ -20,7 +17,6 @@ pub(super) struct TerrainPassBuild {
     pub terrain_medium: wgpu::RenderPipeline,
     pub terrain_high: wgpu::RenderPipeline,
     pub grid: wgpu::RenderPipeline,
-    pub border: wgpu::RenderPipeline,
 }
 
 /// Inputs needed to build the terrain pipelines.
@@ -74,10 +70,6 @@ pub(super) fn build(device: &wgpu::Device, inputs: TerrainPassInputs<'_>) -> Ter
     let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("grid_shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/grid.wgsl").into()),
-    });
-    let border_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("border_shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/border.wgsl").into()),
     });
 
     let terrain_layout = pipelines::create_pipeline_layout(
@@ -141,16 +133,6 @@ pub(super) fn build(device: &wgpu::Device, inputs: TerrainPassInputs<'_>) -> Ter
         target_format,
         PipelineRecipe::OVERLAY_ALPHA,
     );
-    let border = biased_overlay_pipeline(
-        device,
-        "border_pipeline",
-        &overlay_layout,
-        &border_shader,
-        terrain_vb,
-        target_format,
-        OVERLAY_DEPTH_BIAS,
-    );
-
     TerrainPassBuild {
         ground_state: GroundTextureState {
             bind_group_layout: ground_layout,
@@ -163,7 +145,6 @@ pub(super) fn build(device: &wgpu::Device, inputs: TerrainPassInputs<'_>) -> Ter
         terrain_medium,
         terrain_high,
         grid,
-        border,
     }
 }
 

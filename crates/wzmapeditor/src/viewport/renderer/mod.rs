@@ -58,7 +58,6 @@ pub struct EditorRenderer {
     pub terrain_gpu: Option<TerrainGpuData>,
     pub water_gpu: Option<WaterGpuData>,
     pub show_grid: bool,
-    pub show_border: bool,
     pub show_heatmap: bool,
     pub show_viewshed: bool,
     pub settings: RenderSettings,
@@ -95,7 +94,6 @@ impl std::fmt::Debug for EditorRenderer {
             .field("has_water", &self.water_gpu.is_some())
             .field("has_atlas", &self.atlas.has_atlas)
             .field("show_grid", &self.show_grid)
-            .field("show_border", &self.show_border)
             .field("show_heatmap", &self.show_heatmap)
             .field("model_cache_count", &self.models.cache.len())
             .field("draw_call_count", &self.models.draw_calls.len())
@@ -195,7 +193,6 @@ impl EditorRenderer {
                 terrain_medium: terrain.terrain_medium,
                 terrain_high: terrain.terrain_high,
                 grid: terrain.grid,
-                border: terrain.border,
                 sky: water_sky.sky_pipeline,
                 water: water_sky.water_pipeline,
                 shadow_terrain: shadow.terrain_pipeline,
@@ -206,7 +203,6 @@ impl EditorRenderer {
             terrain_gpu: None,
             water_gpu: None,
             show_grid: false,
-            show_border: false,
             show_heatmap: false,
             show_viewshed: false,
             settings: RenderSettings::default(),

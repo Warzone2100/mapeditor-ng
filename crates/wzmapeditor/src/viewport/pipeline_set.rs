@@ -6,7 +6,6 @@ pub struct PipelineSet {
     pub terrain_medium: wgpu::RenderPipeline,
     pub terrain_high: wgpu::RenderPipeline,
     pub grid: wgpu::RenderPipeline,
-    pub border: wgpu::RenderPipeline,
     pub sky: wgpu::RenderPipeline,
     pub water: wgpu::RenderPipeline,
     pub shadow_terrain: wgpu::RenderPipeline,

@@ -5,7 +5,7 @@ The **View** menu controls what is drawn in the 3D viewport. Overlays help you i
 ## Viewport Overlays
 
 - **Show Grid** — tile grid lines over the terrain.
-- **Show Border** — a highlight along the map boundary.
+- **Show Border** — darkens the map border the way the game does: the outermost tiles go near-black and everything within four tiles of the edge dims to a third. Turn it off to edit border terrain at full brightness.
 - **Show Labels** — script label regions as named boxes.
 - **Show Gateways** — gateway segments as colored lines.
 - **Show All Hitboxes** — collision boxes for every placed object — useful for spotting overlap issues.

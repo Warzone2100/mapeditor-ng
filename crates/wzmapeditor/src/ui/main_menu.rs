@@ -143,7 +143,9 @@ pub fn show_menu_bar(ui: &mut Ui, app: &mut EditorApp) {
 
         ui.menu_button("View", |ui| {
             ui.checkbox(&mut app.show_grid, "Show Grid");
-            ui.checkbox(&mut app.show_border, "Show Border");
+            if ui.checkbox(&mut app.show_border, "Show Border").changed() {
+                app.lightmap_dirty = true;
+            }
             ui.checkbox(&mut app.show_labels, "Show Labels");
             ui.checkbox(&mut app.show_gateways, "Show Gateways");
             ui.checkbox(&mut app.show_all_hitboxes, "Show All Hitboxes");

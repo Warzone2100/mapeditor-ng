@@ -42,8 +42,14 @@ pub struct Lightmap {
 /// Takes no sun direction: the value is pure ambient occlusion, so it only
 /// changes when the terrain does. The game computes tile illumination *after*
 /// digging riverbeds, so water tiles darken toward lake centres; passing
-/// `terrain_types` applies the same dug heights here.
-pub fn compute_lightmap(map: &MapData, terrain_types: Option<&TerrainTypeData>) -> Lightmap {
+/// `terrain_types` applies the same dug heights here. `darken_border`
+/// applies the game's map-border darkening (edge ring plus scroll-limit
+/// band); the View menu's Show Border toggle turns it off.
+pub fn compute_lightmap(
+    map: &MapData,
+    terrain_types: Option<&TerrainTypeData>,
+    darken_border: bool,
+) -> Lightmap {
     let w = map.width;
     let h = map.height;
     let mut data = vec![0u8; (w * h) as usize];
@@ -63,7 +69,7 @@ pub fn compute_lightmap(map: &MapData, terrain_types: Option<&TerrainTypeData>) 
 
     for ty in 0..h {
         for tx in 0..w {
-            let edge = tx == 0 || ty == 0 || tx + 1 >= w || ty + 1 >= h;
+            let edge = darken_border && (tx == 0 || ty == 0 || tx + 1 >= w || ty + 1 >= h);
             let mut value = if edge {
                 EDGE_BRIGHTNESS
             } else {
@@ -75,7 +81,7 @@ pub fn compute_lightmap(map: &MapData, terrain_types: Option<&TerrainTypeData>) 
             // that is this asymmetric border band.
             let (wi, hi) = (w as i32, h as i32);
             let (txi, tyi) = (tx as i32, ty as i32);
-            if txi < 4 || txi > wi - 4 || tyi < 4 || tyi > hi - 4 {
+            if darken_border && (txi < 4 || txi > wi - 4 || tyi < 4 || tyi > hi - 4) {
                 value /= 3.0;
             }
             data[(ty * w + tx) as usize] = value as u8;
@@ -170,7 +176,7 @@ mod tests {
     #[test]
     fn lightmap_dimensions_match_map() {
         let map = MapData::new(16, 16);
-        let lm = compute_lightmap(&map, None);
+        let lm = compute_lightmap(&map, None, true);
         assert_eq!(lm.width, 16);
         assert_eq!(lm.height, 16);
         assert_eq!(lm.data.len(), 16 * 16);
@@ -179,7 +185,7 @@ mod tests {
     #[test]
     fn lightmap_brightness_within_range() {
         let map = MapData::new(16, 16);
-        let lm = compute_lightmap(&map, None);
+        let lm = compute_lightmap(&map, None, true);
         for ty in 4..13u32 {
             for tx in 4..13u32 {
                 let b = lm.data[(ty * 16 + tx) as usize];
@@ -196,18 +202,26 @@ mod tests {
         // Flat ground carries no sun term now, so it must sit at the ceiling
         // rather than at the sun's lambert factor.
         let map = MapData::new(16, 16);
-        let lm = compute_lightmap(&map, None);
+        let lm = compute_lightmap(&map, None, true);
         assert_eq!(lm.data[8 * 16 + 8], MAX_BRIGHTNESS as u8);
     }
 
     #[test]
     fn map_border_matches_game_darkening() {
         let map = MapData::new(16, 16);
-        let lm = compute_lightmap(&map, None);
+        let lm = compute_lightmap(&map, None, true);
         // Edge ring: initLighting's 16, then the scroll-limit third.
         assert_eq!(lm.data[0], (EDGE_BRIGHTNESS / 3.0) as u8);
         // Inside the ring but within 4 tiles of the bounds: full AO over 3.
         assert_eq!(lm.data[2 * 16 + 2], (MAX_BRIGHTNESS / 3.0) as u8);
+    }
+
+    #[test]
+    fn border_darkening_off_leaves_border_fully_lit() {
+        let map = MapData::new(16, 16);
+        let lm = compute_lightmap(&map, None, false);
+        assert_eq!(lm.data[0], MAX_BRIGHTNESS as u8);
+        assert_eq!(lm.data[2 * 16 + 2], MAX_BRIGHTNESS as u8);
     }
 
     #[test]
@@ -242,7 +256,7 @@ mod tests {
         terrain_types[7] = TerrainType::Water;
         let ttp = TerrainTypeData { terrain_types };
 
-        let lm = compute_lightmap(&map, Some(&ttp));
+        let lm = compute_lightmap(&map, Some(&ttp), true);
         let edge = lm.data[0];
         let shore_adjacent = lm.data[8 + 1];
         assert!(

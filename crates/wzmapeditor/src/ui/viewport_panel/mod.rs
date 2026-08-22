@@ -190,6 +190,7 @@ pub fn show_viewport(ui: &mut Ui, app: &mut EditorApp) {
                         let lightmap = crate::viewport::lightmap::compute_lightmap(
                             &doc.map.map_data,
                             doc.map.terrain_types.as_ref(),
+                            app.show_border,
                         );
                         resources.renderer.upload_lightmap(device, queue, &lightmap);
                         app.lightmap_dirty = false;
@@ -391,7 +392,6 @@ pub fn show_viewport(ui: &mut Ui, app: &mut EditorApp) {
             rect,
             TerrainPaintCallback {
                 show_grid: app.show_grid,
-                show_border: app.show_border,
                 show_heatmap: app.show_heatmap,
                 show_viewshed: !app.viewshed.is_idle(),
                 camera: pick_camera.clone().unwrap_or_else(|| Camera::for_map(1, 1)),
