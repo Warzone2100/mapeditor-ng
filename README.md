@@ -6,7 +6,7 @@
 
 <p align="center">A cross-platform map editor for <a href="https://wz2100.net/">Warzone 2100</a>, built in Rust with <a href="https://github.com/emilk/egui">egui</a> and <a href="https://github.com/gfx-rs/wgpu">wgpu</a>.</p>
 
-![wzmapeditor](editor.jpg)
+![wzmapeditor](editor.webp)
 
 ---
 
